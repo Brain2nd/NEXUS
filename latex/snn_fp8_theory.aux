@@ -1,0 +1,211 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand*\HyPL@Entry[1]{}
+\HyPL@Entry{0<</S/D>>}
+\citation{monash2025}
+\@writefile{toc}{\contentsline {section}{\numberline {1}引言}{4}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}后硅基时代的计算挑战}{4}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}设计动机}{4}{subsection.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}文档结构}{4}{subsection.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}基础：积分发放神经元}{5}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}IF神经元动力学}{5}{subsection.2.1}\protected@file@percent }
+\newlabel{eq:if_integrate}{{1}{5}{IF神经元动力学}{equation.2.1}{}}
+\newlabel{eq:if_fire}{{2}{5}{IF神经元动力学}{equation.2.2}{}}
+\newlabel{eq:if_reset}{{3}{5}{IF神经元动力学}{equation.2.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}动态阈值脉冲序列编码}{5}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}核心概念：脉冲时间窗}{5}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}逐次逼近原理}{5}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}数学描述}{5}{subsection.3.3}\protected@file@percent }
+\newlabel{eq:dynamic_threshold}{{4}{6}{数学描述}{equation.3.4}{}}
+\newlabel{eq:dynamic_v_update}{{5}{6}{数学描述}{equation.3.5}{}}
+\newlabel{eq:dynamic_spike}{{6}{6}{数学描述}{equation.3.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}脉冲序列解码}{6}{subsection.3.4}\protected@file@percent }
+\newlabel{eq:spike_decode}{{7}{6}{脉冲序列解码}{equation.3.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}FP8 E4M3 格式}{6}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}格式定义}{6}{subsection.4.1}\protected@file@percent }
+\newlabel{eq:fp8_format}{{8}{6}{格式定义}{equation.4.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}数值解释}{6}{subsection.4.2}\protected@file@percent }
+\newlabel{eq:fp8_value}{{9}{6}{数值解释}{equation.4.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}脉冲逻辑门电路}{7}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}基本门电路}{7}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.1}AND门}{7}{subsubsection.5.1.1}\protected@file@percent }
+\newlabel{eq:and_gate}{{10}{7}{AND门}{equation.5.10}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.2}OR门}{7}{subsubsection.5.1.2}\protected@file@percent }
+\newlabel{eq:or_gate}{{11}{7}{OR门}{equation.5.11}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}XOR门}{7}{subsubsection.5.1.3}\protected@file@percent }
+\newlabel{eq:xor_gate}{{12}{7}{XOR门}{equation.5.12}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}NOT门}{8}{subsubsection.5.1.4}\protected@file@percent }
+\newlabel{eq:not_gate}{{13}{8}{NOT门}{equation.5.13}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.5}MUX门（脉冲选择器）}{8}{subsubsection.5.1.5}\protected@file@percent }
+\newlabel{eq:mux_gate}{{14}{8}{MUX门（脉冲选择器）}{equation.5.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}脉冲算术单元}{8}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.1}半加器（Half Adder）}{8}{subsubsection.5.2.1}\protected@file@percent }
+\newlabel{eq:ha_sum}{{19}{8}{半加器（Half Adder）}{equation.5.19}{}}
+\newlabel{eq:ha_carry}{{20}{8}{半加器（Half Adder）}{equation.5.20}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.2}全加器（Full Adder）}{9}{subsubsection.5.2.2}\protected@file@percent }
+\newlabel{eq:fa_sum}{{21}{9}{全加器（Full Adder）}{equation.5.21}{}}
+\newlabel{eq:fa_carry}{{22}{9}{全加器（Full Adder）}{equation.5.22}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.3}纹波进位加法器（Ripple Carry Adder）}{9}{subsubsection.5.2.3}\protected@file@percent }
+\newlabel{eq:rca}{{23}{9}{纹波进位加法器（Ripple Carry Adder）}{equation.5.23}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.4}脉冲减法器}{9}{subsubsection.5.2.4}\protected@file@percent }
+\newlabel{eq:sub_diff}{{24}{9}{脉冲减法器}{equation.5.24}{}}
+\newlabel{eq:sub_borrow}{{25}{9}{脉冲减法器}{equation.5.25}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}脉冲比较器}{10}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.1}$n$位比较器原理}{10}{subsubsection.5.3.1}\protected@file@percent }
+\newlabel{eq:comparator_principle}{{26}{10}{$n$位比较器原理}{equation.5.26}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.2}4位脉冲比较器}{10}{subsubsection.5.3.2}\protected@file@percent }
+\newlabel{eq:4bit_gt}{{29}{10}{4位脉冲比较器}{equation.5.29}{}}
+\newlabel{eq:4bit_eq}{{30}{10}{4位脉冲比较器}{equation.5.30}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.3}3位脉冲比较器}{10}{subsubsection.5.3.3}\protected@file@percent }
+\newlabel{eq:3bit_gt}{{31}{10}{3位脉冲比较器}{equation.5.31}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}桶形移位器（Barrel Shifter）}{10}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.4.1}右移位器原理}{10}{subsubsection.5.4.1}\protected@file@percent }
+\newlabel{eq:right_shift}{{32}{10}{右移位器原理}{equation.5.32}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.4.2}桶形结构（以8位为例）}{11}{subsubsection.5.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.4.3}左移位器}{11}{subsubsection.5.4.3}\protected@file@percent }
+\newlabel{eq:left_shift}{{37}{11}{左移位器}{equation.5.37}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}前导零检测器（Leading Zero Detector, LZD）}{11}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.5.1}8位LZD原理}{11}{subsubsection.5.5.1}\protected@file@percent }
+\newlabel{eq:lzc_def}{{38}{11}{8位LZD原理}{equation.5.38}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.5.2}分层检测}{11}{subsubsection.5.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.5.3}LZC编码}{12}{subsubsection.5.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}FP8 乘法器}{12}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}乘法分解}{12}{subsection.6.1}\protected@file@percent }
+\newlabel{eq:fp8_mul}{{50}{12}{乘法分解}{equation.6.50}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}符号计算}{12}{subsection.6.2}\protected@file@percent }
+\newlabel{eq:mul_sign}{{51}{12}{符号计算}{equation.6.51}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}指数计算}{12}{subsection.6.3}\protected@file@percent }
+\newlabel{eq:mul_exp}{{52}{12}{指数计算}{equation.6.52}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}尾数乘法}{12}{subsection.6.4}\protected@file@percent }
+\newlabel{eq:mantissa_mul}{{53}{12}{尾数乘法}{equation.6.53}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.4.1}部分积生成}{12}{subsubsection.6.4.1}\protected@file@percent }
+\newlabel{eq:partial_product}{{54}{12}{部分积生成}{equation.6.54}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.4.2}部分积累加}{12}{subsubsection.6.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}规格化与舍入 (纯SNN实现)}{12}{subsection.6.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.1}通用规格化单元 (Generic Normalization Unit)}{13}{subsubsection.6.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.2}下溢处理 (Gradual Underflow)}{13}{subsubsection.6.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.3}RNE舍入}{13}{subsubsection.6.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.4}Pre-shift Sticky\_extra 动态修正}{13}{subsubsection.6.5.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces sticky\_extra的动态角色}}{13}{table.1}\protected@file@percent }
+\newlabel{tab:sticky_extra_role}{{1}{13}{sticky\_extra的动态角色}{table.1}{}}
+\newlabel{eq:m2_fix}{{62}{14}{Pre-shift Sticky\_extra 动态修正}{equation.6.62}{}}
+\newlabel{eq:round_fix}{{63}{14}{Pre-shift Sticky\_extra 动态修正}{equation.6.63}{}}
+\newlabel{eq:sticky_fix}{{64}{14}{Pre-shift Sticky\_extra 动态修正}{equation.6.64}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}FP8 加法器}{14}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}设计目标}{14}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}整体架构}{14}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}12位内部精度}{14}{subsection.7.3}\protected@file@percent }
+\newlabel{eq:12bit_mantissa}{{65}{14}{12位内部精度}{equation.7.65}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}Step 1: 指数比较与对齐}{15}{subsection.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.4.1}有效指数计算}{15}{subsubsection.7.4.1}\protected@file@percent }
+\newlabel{eq:effective_exp}{{66}{15}{有效指数计算}{equation.7.66}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.4.2}绝对值比较}{15}{subsubsection.7.4.2}\protected@file@percent }
+\newlabel{eq:abs_compare}{{69}{15}{绝对值比较}{equation.7.69}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.4.3}指数差计算}{15}{subsubsection.7.4.3}\protected@file@percent }
+\newlabel{eq:exp_diff}{{70}{15}{指数差计算}{equation.7.70}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.5}Step 2: 尾数对齐}{15}{subsection.7.5}\protected@file@percent }
+\newlabel{eq:mantissa_align}{{72}{15}{Step 2: 尾数对齐}{equation.7.72}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.6}Step 3: 尾数运算}{15}{subsection.7.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.6.1}符号处理}{15}{subsubsection.7.6.1}\protected@file@percent }
+\newlabel{eq:sign_diff}{{73}{15}{符号处理}{equation.7.73}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.6.2}加法/减法选择}{15}{subsubsection.7.6.2}\protected@file@percent }
+\newlabel{eq:mantissa_op}{{74}{15}{加法/减法选择}{equation.7.74}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.6.3}结果进位}{16}{subsubsection.7.6.3}\protected@file@percent }
+\newlabel{eq:result_carry}{{75}{16}{结果进位}{equation.7.75}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.7}Step 4: 归一化}{16}{subsection.7.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.7.1}前导零检测}{16}{subsubsection.7.7.1}\protected@file@percent }
+\newlabel{eq:lzc_compute}{{76}{16}{前导零检测}{equation.7.76}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.7.2}指数调整}{16}{subsubsection.7.7.2}\protected@file@percent }
+\newlabel{eq:exp_norm}{{77}{16}{指数调整}{equation.7.77}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.7.3}指数下溢检测}{16}{subsubsection.7.7.3}\protected@file@percent }
+\newlabel{eq:underflow_detect}{{78}{16}{指数下溢检测}{equation.7.78}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.7.4}尾数归一化}{16}{subsubsection.7.7.4}\protected@file@percent }
+\newlabel{eq:mantissa_norm}{{79}{16}{尾数归一化}{equation.7.79}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.8}Step 5: RNE舍入}{16}{subsection.7.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.8.1}12位内部表示索引约定}{16}{subsubsection.7.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.8.2}舍入位和粘滞位提取}{17}{subsubsection.7.8.2}\protected@file@percent }
+\newlabel{eq:round_sticky}{{82}{17}{舍入位和粘滞位提取}{equation.7.82}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.8.3}RNE判断}{17}{subsubsection.7.8.3}\protected@file@percent }
+\newlabel{eq:rne_decision}{{83}{17}{RNE判断}{equation.7.83}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.8.4}尾数进位}{17}{subsubsection.7.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.9}Step 6: 特殊情况处理}{17}{subsection.7.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.9.1}完全抵消检测}{17}{subsubsection.7.9.1}\protected@file@percent }
+\newlabel{eq:exact_cancel}{{85}{17}{完全抵消检测}{equation.7.85}{}}
+\newlabel{eq:abs_equal}{{86}{17}{完全抵消检测}{equation.7.86}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.9.2}零结果路径选择}{18}{subsubsection.7.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {7.9.3}符号确定}{18}{subsubsection.7.9.3}\protected@file@percent }
+\newlabel{eq:sign_output}{{94}{18}{符号确定}{equation.7.94}{}}
+\newlabel{eq:sign_large}{{95}{18}{符号确定}{equation.7.95}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.10}完整计算流程（伪代码）}{19}{subsection.7.10}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces 空间编码FP8加法器}}{19}{algorithm.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.11}神经元数量估算}{19}{subsection.7.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}FP8 Linear层}{19}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}数学定义}{19}{subsection.8.1}\protected@file@percent }
+\newlabel{eq:linear}{{96}{19}{数学定义}{equation.8.96}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces 空间编码FP8加法器神经元数量分解}}{20}{table.2}\protected@file@percent }
+\newlabel{tab:spatial_adder_neurons}{{2}{20}{空间编码FP8加法器神经元数量分解}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}脉冲域实现}{20}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {8.2.1}接口}{20}{subsubsection.8.2.1}\protected@file@percent }
+\newlabel{eq:linear_interface}{{99}{20}{接口}{equation.8.99}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {8.2.2}广播乘法}{20}{subsubsection.8.2.2}\protected@file@percent }
+\newlabel{eq:broadcast_mul}{{100}{20}{广播乘法}{equation.8.100}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {8.2.3}树形累加}{20}{subsubsection.8.2.3}\protected@file@percent }
+\newlabel{eq:tree_depth}{{101}{20}{树形累加}{equation.8.101}{}}
+\newlabel{eq:tree_add}{{105}{20}{树形累加}{equation.8.105}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}系统特性}{21}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}位级精确性}{21}{subsection.9.1}\protected@file@percent }
+\newlabel{eq:bit_exact}{{106}{21}{位级精确性}{equation.9.106}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}纯脉冲驱动}{21}{subsection.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}复杂度分析}{21}{subsection.9.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.3.1}神经元数量}{21}{subsubsection.9.3.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces 各组件的资源与延迟}}{21}{table.3}\protected@file@percent }
+\newlabel{tab:neuron_count}{{3}{21}{各组件的资源与延迟}{table.3}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.3.2}延迟定义说明}{21}{subsubsection.9.3.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 组件延迟（逻辑层级数）}}{22}{table.4}\protected@file@percent }
+\newlabel{tab:latency_compare}{{4}{22}{组件延迟（逻辑层级数）}{table.4}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.3.3}Linear层延迟分析}{22}{subsubsection.9.3.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Linear层延迟}}{22}{table.5}\protected@file@percent }
+\newlabel{tab:linear_latency}{{5}{22}{Linear层延迟}{table.5}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.3.4}加法器精度保证}{22}{subsubsection.9.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}实验验证}{22}{section.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}实验一：FP8乘法器全量测试}{22}{subsection.10.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces FP8乘法器全量测试结果}}{23}{table.6}\protected@file@percent }
+\newlabel{tab:mul_fulltest}{{6}{23}{FP8乘法器全量测试结果}{table.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}实验二：极端边界压力测试}{23}{subsection.10.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces 极端边界压力测试结果}}{23}{table.7}\protected@file@percent }
+\newlabel{tab:corner_case}{{7}{23}{极端边界压力测试结果}{table.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}实验三：物理鲁棒性分析}{23}{subsection.10.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces 泄漏因子$\beta $扫描结果}}{24}{table.8}\protected@file@percent }
+\newlabel{tab:beta_scan}{{8}{24}{泄漏因子$\beta $扫描结果}{table.8}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.3.1}泄漏因子$\beta $扫描}{24}{subsubsection.10.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.3.2}输入噪声$\sigma $扫描}{24}{subsubsection.10.3.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 输入噪声$\sigma $扫描结果}}{24}{table.9}\protected@file@percent }
+\newlabel{tab:sigma_scan}{{9}{24}{输入噪声$\sigma $扫描结果}{table.9}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.3.3}鲁棒性结论}{24}{subsubsection.10.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.4}实验四：资源效率统计}{24}{subsection.10.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces 各组件神经元数量统计（IFNode精确计数）}}{25}{table.10}\protected@file@percent }
+\newlabel{tab:neuron_count_exp}{{10}{25}{各组件神经元数量统计（IFNode精确计数）}{table.10}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.4.1}神经元数量统计}{25}{subsubsection.10.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.4.2}脉冲发放统计}{25}{subsubsection.10.4.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces 脉冲发放统计（100次随机测试平均值）}}{25}{table.11}\protected@file@percent }
+\newlabel{tab:spike_activity}{{11}{25}{脉冲发放统计（100次随机测试平均值）}{table.11}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.4.3}Linear层扩展性分析}{25}{subsubsection.10.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Linear层资源需求分析（基于IFNode精确计数）}}{26}{table.12}\protected@file@percent }
+\newlabel{tab:linear_resource}{{12}{26}{Linear层资源需求分析（基于IFNode精确计数）}{table.12}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.4.4}资源效率结论}{26}{subsubsection.10.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.5}实验五：端到端Linear层验证}{26}{subsection.10.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.5.1}累加模式说明}{26}{subsubsection.10.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.5.2}测试结果}{26}{subsubsection.10.5.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces MNIST端到端验证结果 (50样本)}}{26}{table.13}\protected@file@percent }
+\newlabel{tab:e2e_results}{{13}{26}{MNIST端到端验证结果 (50样本)}{table.13}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.5.3}关键发现}{27}{subsubsection.10.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}结论}{27}{section.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.1}核心贡献}{27}{subsection.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.2}纯SNN保证}{27}{subsection.11.2}\protected@file@percent }
+\bibcite{monash2025}{1}
+\bibcite{fp8}{2}
+\bibcite{loihi}{3}
+\bibcite{spikingjelly}{4}
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.3}硬件适用性}{28}{subsection.11.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.4}未来工作}{28}{subsection.11.4}\protected@file@percent }
+\gdef \@abspage@last{28}
