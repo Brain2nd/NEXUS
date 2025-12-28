@@ -737,11 +737,11 @@ def test_template_propagation():
     # 检查所有子组件
     components_ok = True
     
-    # XOR 门内部有两个神经元
-    if hasattr(fa.xor1, 'hidden_node'):
-        xor1_hidden_ok = isinstance(fa.xor1.hidden_node, SimpleLIFNode) and fa.xor1.hidden_node.beta == 0.85
-        xor1_out_ok = isinstance(fa.xor1.out_node, SimpleLIFNode) and fa.xor1.out_node.beta == 0.85
-        components_ok = components_ok and xor1_hidden_ok and xor1_out_ok
+    # XOR 门内部有三个神经元 (双轨编码: and1, and2, or_out)
+    xor1_and1_ok = isinstance(fa.xor1.and1, SimpleLIFNode) and fa.xor1.and1.beta == 0.85
+    xor1_and2_ok = isinstance(fa.xor1.and2, SimpleLIFNode) and fa.xor1.and2.beta == 0.85
+    xor1_or_ok = isinstance(fa.xor1.or_out, SimpleLIFNode) and fa.xor1.or_out.beta == 0.85
+    components_ok = components_ok and xor1_and1_ok and xor1_and2_ok and xor1_or_ok
     
     # AND 门
     and1_ok = isinstance(fa.and1.node, SimpleLIFNode) and fa.and1.node.beta == 0.85
@@ -777,7 +777,7 @@ def test_template_propagation():
     # 测试 VecAdder 的子组件
     va = VecAdder(bits=4, neuron_template=lif_template).to(device)
     
-    va_xor1_ok = isinstance(va.xor1.hidden, SimpleLIFNode) and va.xor1.hidden.beta == 0.85
+    va_xor1_ok = isinstance(va.xor1.and1, SimpleLIFNode) and va.xor1.and1.beta == 0.85
     va_and1_ok = isinstance(va.and1.node, SimpleLIFNode) and va.and1.node.beta == 0.85
     va_ok = va_xor1_ok and va_and1_ok
     

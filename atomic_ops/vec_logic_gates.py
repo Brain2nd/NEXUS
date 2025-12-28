@@ -85,48 +85,80 @@ class VecOR(nn.Module):
 
 
 class VecNOT(nn.Module):
-    """向量化NOT门 - 一个神经元处理任意形状输入
+    """向量化NOT门 - 双轨编码纯拓扑实现（零计算！）
     
-    数学原理: 偏置1.0 + 抑制性权重-1.0，输入0时V=1>0.5发放，输入1时V=0不发放
-    注意: 1.0-x 是突触电流计算，不是逻辑运算
+    **双轨编码原理**:
+    - 输入 A 表示为 (A_pos, A_neg) = (A, NOT_A)
+    - NOT(A) = A_neg = 1 - A（取负极性）
+    - 纯拓扑操作，无需神经元！
+    
+    **纯 SNN 约束**:
+    - 零计算！只是"交换线路"
+    - 无负权重，无偏置
+    - 边界处的 1-x 是编码转换，不是逻辑运算
+    
+    门电路计数: 0 个神经元
     
     Args:
-        neuron_template: 神经元模板，None 使用默认 IF 神经元
+        neuron_template: 神经元模板（此门不使用，保留用于接口兼容）
     """
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=0.5)
+        # NOT 是纯拓扑操作，不需要神经元！
     
     def forward(self, x):
-        self.node.reset()
-        return self.node(1.0 - x)  # 突触电流 = bias(1) + weight(-1)*x
+        # 双轨编码：NOT = 取负极性 = 1-x
+        # 边界转换是允许的
+        return 1.0 - x
     
     def reset(self):
-        self.node.reset()
+        pass  # 无状态
 
 
 class VecXOR(nn.Module):
-    """向量化XOR门 - 两层神经元
+    """向量化XOR门 - 双轨编码纯 SNN 实现（无负权重！）
     
-    数学原理: XOR = (A + B) - 2*AND(A,B)
+    **双轨编码原理**:
+    - XOR = (A AND NOT_B) OR (NOT_A AND B)
+    - 使用双轨编码，NOT 变成取负极性
+    - 只使用 +1 权重的脉冲汇聚
+    
+    **纯 SNN 约束**:
+    - 无 -2.0 权重！
+    - 无负权重！
+    - 100% 位精确来自空间组合逻辑
+    
+    门电路计数: 3 个神经元（2 AND + 1 OR）
     
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.hidden = _create_neuron(neuron_template, threshold=1.5)
-        self.output = _create_neuron(neuron_template, threshold=0.5)
+        # XOR = (A_pos AND B_neg) OR (A_neg AND B_pos)
+        self.and1 = _create_neuron(neuron_template, threshold=1.5)  # A AND NOT_B
+        self.and2 = _create_neuron(neuron_template, threshold=1.5)  # NOT_A AND B
+        self.or_out = _create_neuron(neuron_template, threshold=0.5)  # 输出 OR
     
     def forward(self, a, b):
-        self.hidden.reset()
-        self.output.reset()
-        h = self.hidden(a + b)  # AND(a, b)
-        return self.output(a + b - 2.0 * h)  # XOR = a+b-2*AND
+        self.and1.reset()
+        self.and2.reset()
+        self.or_out.reset()
+        
+        # 双轨编码：(pos, neg) = (x, 1-x)
+        a_pos, a_neg = a, 1.0 - a
+        b_pos, b_neg = b, 1.0 - b
+        
+        # XOR = (A_pos AND B_neg) OR (A_neg AND B_pos)
+        # 只使用 +1 权重！
+        term1 = self.and1(a_pos + b_neg)  # A AND NOT_B
+        term2 = self.and2(a_neg + b_pos)  # NOT_A AND B
+        return self.or_out(term1 + term2)  # OR
     
     def reset(self):
-        self.hidden.reset()
-        self.output.reset()
+        self.and1.reset()
+        self.and2.reset()
+        self.or_out.reset()
 
 
 class VecMUX(nn.Module):

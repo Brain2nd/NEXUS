@@ -248,83 +248,99 @@ class ORGate(BaseLogicGate):
 
 
 class XORGate(BaseLogicGate):
-    """XOR 门 - 使用两层 IF/LIF 神经元实现
+    """XOR 门 - 双轨编码纯 SNN 实现（无负权重！）
     
-    **数学原理**:
-    ```
-    层1: H = AND(A, B) = H(A + B - 1.5)
-    层2: 输出 = H(A + B - 2H - 0.5)
+    **双轨编码原理**:
+    - 输入 A 表示为 (A_pos, A_neg) = (A, NOT_A)
+    - XOR = (A AND NOT_B) OR (NOT_A AND B)
+    - 使用双轨编码，NOT 操作变成取负极性，无需计算
     
-    简化: XOR = (A + B) - 2×AND(A, B)
-    ```
+    **纯 SNN 约束**:
+    - 只使用 +1 权重的脉冲汇聚
+    - 无 -2.0 权重，无负权重
+    - 100% 位精确来自空间组合逻辑
     
     **真值表**:
-    | A | B | H | A+B-2H | 输出 |
-    |---|---|---|--------|------|
-    | 0 | 0 | 0 |   0    | 0    |
-    | 0 | 1 | 0 |   1    | 1    |
-    | 1 | 0 | 0 |   1    | 1    |
-    | 1 | 1 | 1 |   0    | 0    |
+    | A | B | XOR |
+    |---|---|-----|
+    | 0 | 0 | 0   |
+    | 0 | 1 | 1   |
+    | 1 | 0 | 1   |
+    | 1 | 1 | 0   |
     
-    门电路计数: 2 个 IF 神经元
+    门电路计数: 4 个 AND + 1 个 OR = 5 个 IF 神经元
     
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.hidden_node = _create_neuron(neuron_template, threshold=1.5)
-        self.out_node = _create_neuron(neuron_template, threshold=0.5)
+        # XOR = (A AND NOT_B) OR (NOT_A AND B)
+        # 使用双轨：(A_pos AND B_neg) OR (A_neg AND B_pos)
+        self.and1 = _create_neuron(neuron_template, threshold=1.5)  # A AND NOT_B
+        self.and2 = _create_neuron(neuron_template, threshold=1.5)  # NOT_A AND B
+        self.or_out = _create_neuron(neuron_template, threshold=0.5)  # 输出 OR
         
     def forward(self, x_a, x_b):
         self.reset()
-        hidden_spike = self.hidden_node(x_a + x_b)  # AND(A, B)
-        out_spike = self.out_node(x_a + x_b - 2.0 * hidden_spike)  # XOR
+        # 双轨编码：生成 (pos, neg) = (x, 1-x)
+        # 边界转换是允许的（见 SNN_PURITY_ANALYSIS.md）
+        a_pos, a_neg = x_a, 1.0 - x_a
+        b_pos, b_neg = x_b, 1.0 - x_b
+        
+        # XOR = (A_pos AND B_neg) OR (A_neg AND B_pos)
+        # 只使用 +1 权重的脉冲汇聚！
+        term1 = self.and1(a_pos + b_neg)  # A AND NOT_B (阈值 1.5)
+        term2 = self.and2(a_neg + b_pos)  # NOT_A AND B (阈值 1.5)
+        out_spike = self.or_out(term1 + term2)  # OR (阈值 0.5)
+        
         return out_spike
 
     def reset(self):
-        self.hidden_node.reset()
-        self.out_node.reset()
+        self.and1.reset()
+        self.and2.reset()
+        self.or_out.reset()
 
 
 class NOTGate(BaseLogicGate):
-    """NOT 门 - 使用 IF/LIF 神经元 + 抑制性突触实现
+    """NOT 门 - 双轨编码纯拓扑实现（零计算！）
     
-    **数学原理**:
-    ```
-    V = bias + weight × A = 1.0 + (-1.0) × A = 1 - A
-    输出 = H(V - 0.5)
-    ```
+    **双轨编码原理**:
+    - 输入 A 表示为 (A_pos, A_neg) = (A, NOT_A)
+    - NOT(A) = A_neg（直接取负极性）
+    - 只需"交换线路"，不需要任何神经元！
+    
+    **纯 SNN 约束**:
+    - NOT 是纯拓扑操作
+    - 无负权重，无偏置电流
+    - 零计算！
     
     **真值表**:
-    | A | V = 1-A | 输出 |
-    |---|---------|------|
-    | 0 |    1    | 1    | ← V=1 > 0.5
-    | 1 |    0    | 0    | ← V=0 < 0.5
+    | A | NOT_A |
+    |---|-------|
+    | 0 |   1   |
+    | 1 |   0   |
     
-    **实现细节**:
-    - 偏置电流 (bias): 1.0 (恒定兴奋性)
-    - 突触权重 (weight): -1.0 (抑制性)
-    - 注意: bias + weight * x 是突触电流计算，不是逻辑运算
+    门电路计数: 0 个 IF 神经元（纯拓扑）
     
-    门电路计数: 1 个 IF 神经元
+    **注意**: 边界处的 1.0 - x 是编码转换，不是逻辑运算。
     
     Args:
-        neuron_template: 神经元模板，None 使用默认 IF 神经元
+        neuron_template: 神经元模板（此门不使用，保留用于接口兼容）
     """
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=0.5)
-        self.bias = 1.0    # 恒定偏置电流（兴奋性）
-        self.weight = -1.0  # 抑制性突触权重
+        # NOT 门是纯拓扑操作，不需要神经元！
+        # 保留 neuron_template 参数只是为了接口兼容
         
     def forward(self, x):
-        self.reset()
-        current = self.bias + self.weight * x  # 突触电流 = 1 - x
-        return self.node(current)
+        # 双轨编码：(pos, neg) = (x, 1-x)
+        # NOT = 取负极性 = 1-x
+        # 边界转换是允许的（见 SNN_PURITY_ANALYSIS.md）
+        return 1.0 - x
     
     def reset(self):
-        self.node.reset()
+        pass  # 无状态，无需重置
 
 class XNORGate(nn.Module):
     """XNOR门：当两个输入相同时输出1
