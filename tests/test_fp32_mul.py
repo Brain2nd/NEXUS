@@ -1,6 +1,6 @@
 """
-FP32 乘法器测试 - 验证纯SNN实现与PyTorch的一致性
-===================================================
+FP32 乘法器测试 - 验证纯SNN实现与PyTorch的一致性（端到端浮点验证）
+===================================================================
 
 测试内容:
 1. 随机数测试 (10000对)
@@ -16,6 +16,7 @@ import sys
 sys.path.insert(0, '/home/dgxspark/Desktop/HumanBrain')
 
 from SNNTorch.atomic_ops import SpikeFP32Multiplier
+from SNNTorch.atomic_ops.pulse_decoder import PulseFP32Decoder
 
 
 def float_to_fp32_bits(x):
@@ -35,29 +36,15 @@ def float_to_fp32_bits(x):
     return result
 
 
-def fp32_bits_to_float(bits):
-    """将FP32二进制脉冲转换回浮点数"""
-    device = bits.device
-    batch_shape = bits.shape[:-1]
-    
-    # 组装成int32
-    result = torch.zeros(batch_shape, dtype=torch.int32, device=device)
-    for i in range(32):
-        result = result + (bits[..., 31-i].int() << i)
-    
-    # 转换为float32
-    result_np = result.detach().cpu().numpy().view('float32')
-    return torch.tensor(result_np, device=device)
-
-
 def test_basic():
-    """基础功能测试"""
+    """基础功能测试（端到端浮点验证）"""
     print("=" * 60)
     print("测试1: 基础功能测试")
     print("=" * 60)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mul = SpikeFP32Multiplier().to(device)
+    decoder = PulseFP32Decoder().to(device)
     
     # 测试简单乘法
     test_cases = [
@@ -80,7 +67,8 @@ def test_basic():
         b_bits = float_to_fp32_bits(b_t)
         
         result_bits = mul(a_bits, b_bits)
-        result = fp32_bits_to_float(result_bits)
+        decoder.reset()
+        result = decoder(result_bits)
         
         # PyTorch参考
         ref = a_t * b_t
@@ -97,13 +85,14 @@ def test_basic():
 
 
 def test_special_values():
-    """特殊值测试"""
+    """特殊值测试（端到端浮点验证）"""
     print("\n" + "=" * 60)
     print("测试2: 特殊值测试")
     print("=" * 60)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mul = SpikeFP32Multiplier().to(device)
+    decoder = PulseFP32Decoder().to(device)
     
     inf = float('inf')
     nan = float('nan')
@@ -132,7 +121,8 @@ def test_special_values():
         b_bits = float_to_fp32_bits(b_t)
         
         result_bits = mul(a_bits, b_bits)
-        result = fp32_bits_to_float(result_bits)
+        decoder.reset()
+        result = decoder(result_bits)
         
         ref = a_t * b_t
         
@@ -155,13 +145,14 @@ def test_special_values():
 
 
 def test_random():
-    """随机数测试 - 批量处理"""
+    """随机数测试 - 批量处理（端到端浮点验证）"""
     print("\n" + "=" * 60)
     print("测试3: 随机数测试 (批量处理)")
     print("=" * 60)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mul = SpikeFP32Multiplier().to(device)
+    decoder = PulseFP32Decoder().to(device)
     
     torch.manual_seed(42)
     
@@ -189,7 +180,8 @@ def test_random():
         
         # 批量计算
         result_bits = mul(a_bits, b_bits)
-        result = fp32_bits_to_float(result_bits)
+        decoder.reset()
+        result = decoder(result_bits)
         
         # PyTorch参考
         ref = a * b
@@ -222,13 +214,14 @@ def test_random():
 
 
 def test_batch():
-    """批量处理测试"""
+    """批量处理测试（端到端浮点验证）"""
     print("\n" + "=" * 60)
     print("测试4: 批量处理测试")
     print("=" * 60)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mul = SpikeFP32Multiplier().to(device)
+    decoder = PulseFP32Decoder().to(device)
     
     # 测试不同batch形状
     shapes = [
@@ -248,7 +241,8 @@ def test_batch():
         b_bits = float_to_fp32_bits(b)
         
         result_bits = mul(a_bits, b_bits)
-        result = fp32_bits_to_float(result_bits)
+        decoder.reset()
+        result = decoder(result_bits)
         
         ref = a * b
         

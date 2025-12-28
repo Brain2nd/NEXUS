@@ -30,12 +30,16 @@ class SpikeFP8ReLU(nn.Module):
     符合 SNN 基本原则:
     - 使用 VecNOT 替代 (1 - x)
     - 使用 VecAND 替代 (a * b)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
     
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.vec_not = VecNOT()
-        self.vec_and = VecAND()
+        nt = neuron_template
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
     
     def forward(self, x_pulse):
         """
@@ -69,12 +73,16 @@ class SpikeFP32ReLU(nn.Module):
     
     输入: [..., 32] FP32 脉冲序列，x[..., 0] 是符号位
     输出: [..., 32] ReLU 后的 FP32 脉冲序列
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
     
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.vec_not = VecNOT()
-        self.vec_and = VecAND()
+        nt = neuron_template
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
     
     def forward(self, x_pulse):
         """
@@ -105,12 +113,16 @@ class SpikeFP64ReLU(nn.Module):
     
     输入: [..., 64] FP64 脉冲序列，x[..., 0] 是符号位
     输出: [..., 64] ReLU 后的 FP64 脉冲序列
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
     
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.vec_not = VecNOT()
-        self.vec_and = VecAND()
+        nt = neuron_template
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
     
     def forward(self, x_pulse):
         """

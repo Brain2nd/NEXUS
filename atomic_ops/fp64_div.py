@@ -80,47 +80,51 @@ class SpikeFP64Divider(nn.Module):
     
     输入: A, B: [..., 64] FP64脉冲 [S | E10..E0 | M51..M0] MSB first
     输出: [..., 64] FP64脉冲 (A / B)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # ===== 符号 =====
-        self.sign_xor = VecXOR()
+        self.sign_xor = VecXOR(neuron_template=nt)
         
         # ===== 指数运算 =====
-        self.exp_sub = VecSubtractor(13)  # 13位防溢出
-        self.exp_add = VecAdder(13)
+        self.exp_sub = VecSubtractor(13, neuron_template=nt)  # 13位防溢出
+        self.exp_add = VecAdder(13, neuron_template=nt)
         
         # ===== 特殊值检测 =====
-        self.exp_and_tree = VecANDTree()  # 检测E全1
-        self.exp_or_tree = VecORTree()    # 检测E非零
-        self.mant_or_tree = VecORTree()   # 检测M非零
-        self.not_gate = VecNOT()
-        self.and_gate = VecAND()
-        self.or_gate = VecOR()
+        self.exp_and_tree = VecANDTree(neuron_template=nt)  # 检测E全1
+        self.exp_or_tree = VecORTree(neuron_template=nt)    # 检测E非零
+        self.mant_or_tree = VecORTree(neuron_template=nt)   # 检测M非零
+        self.not_gate = VecNOT(neuron_template=nt)
+        self.and_gate = VecAND(neuron_template=nt)
+        self.or_gate = VecOR(neuron_template=nt)
         
         # ===== 尾数除法 (55位用于54位尾数+1位扩展) =====
         # 109次迭代产生足够精度
-        self.div_iterations = nn.ModuleList([VecDivIteration(55) for _ in range(109)])
+        self.div_iterations = nn.ModuleList([VecDivIteration(55, neuron_template=nt) for _ in range(109)])
         
         # ===== 尾数比较 =====
-        self.mant_cmp = VecSubtractor(55)
+        self.mant_cmp = VecSubtractor(55, neuron_template=nt)
         
         # ===== RNE舍入 =====
-        self.rne_or = VecOR()
-        self.rne_and = VecAND()
-        self.round_adder = VecAdder(53)
+        self.rne_or = VecOR(neuron_template=nt)
+        self.rne_and = VecAND(neuron_template=nt)
+        self.round_adder = VecAdder(53, neuron_template=nt)
         
         # ===== 归一化选择 =====
-        self.normalize_mux = VecMUX()
-        self.exp_mux = VecMUX()
+        self.normalize_mux = VecMUX(neuron_template=nt)
+        self.exp_mux = VecMUX(neuron_template=nt)
         
         # ===== 特殊值输出选择 =====
-        self.nan_mux = VecMUX()
-        self.inf_mux = VecMUX()
-        self.zero_mux = VecMUX()
-        self.overflow_mux = VecMUX()
-        self.underflow_mux = VecMUX()
+        self.nan_mux = VecMUX(neuron_template=nt)
+        self.inf_mux = VecMUX(neuron_template=nt)
+        self.zero_mux = VecMUX(neuron_template=nt)
+        self.overflow_mux = VecMUX(neuron_template=nt)
+        self.underflow_mux = VecMUX(neuron_template=nt)
         
     def forward(self, A, B):
         A, B = torch.broadcast_tensors(A, B)

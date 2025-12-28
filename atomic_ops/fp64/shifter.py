@@ -8,8 +8,9 @@ class BarrelShifterRight64(nn.Module):
     输入: data [..., 64], shift [..., 6] (二进制脉冲)
     输出: shifted [..., 64]
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         # 6层 MUX，每层处理一位 shift
         # Layer 0: shift 1
         # Layer 1: shift 2
@@ -22,7 +23,7 @@ class BarrelShifterRight64(nn.Module):
         shifts = [1, 2, 4, 8, 16, 32]
         
         for s in shifts:
-            layer = nn.ModuleList([MUXGate() for _ in range(64)])
+            layer = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
             self.layers.append(layer)
             
     def forward(self, data, shift):
@@ -74,13 +75,14 @@ class BarrelShifterLeft64(nn.Module):
     输入: data [..., 64], shift [..., 6]
     输出: shifted [..., 64]
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         self.layers = nn.ModuleList()
         shifts = [1, 2, 4, 8, 16, 32]
         
         for s in shifts:
-            layer = nn.ModuleList([MUXGate() for _ in range(64)])
+            layer = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
             self.layers.append(layer)
             
     def forward(self, data, shift):

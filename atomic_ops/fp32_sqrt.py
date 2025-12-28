@@ -16,12 +16,13 @@ from .logic_gates import (ANDGate, ORGate, XORGate, NOTGate, MUXGate,
 
 class Subtractor50Bit(nn.Module):
     """50位减法器 - 纯SNN (LSB first)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 50
-        self.not_gates = nn.ModuleList([NOTGate() for _ in range(50)])
-        self.adders = nn.ModuleList([FullAdder() for _ in range(50)])
-        self.borrow_not = NOTGate()
+        nt = neuron_template
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(50)])
+        self.adders = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(50)])
+        self.borrow_not = NOTGate(neuron_template=nt)
         
     def forward(self, A, B):
         """A - B, LSB first. Returns (result, borrow)"""
@@ -53,52 +54,56 @@ class SpikeFP32Sqrt(nn.Module):
     
     输入: x [..., 32] FP32脉冲
     输出: sqrt(x) [..., 32] FP32脉冲
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 50位减法器 (用于 R - T)
-        self.subtractor = Subtractor50Bit()
+        self.subtractor = Subtractor50Bit(neuron_template=nt)
         
         # 余数选择MUX (50位)
-        self.mux_r = nn.ModuleList([MUXGate() for _ in range(50)])
+        self.mux_r = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(50)])
         
         # Q bit NOT (用于判断 R >= T)
-        self.q_not = NOTGate()
+        self.q_not = NOTGate(neuron_template=nt)
         
         # 指数处理
-        self.exp_add = RippleCarryAdder(bits=9)
-        self.exp_mux = nn.ModuleList([MUXGate() for _ in range(9)])
+        self.exp_add = RippleCarryAdder(bits=9, neuron_template=nt)
+        self.exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(9)])
         
         # 舍入
-        self.rne_or = ORGate()
-        self.rne_and = ANDGate()
-        self.round_adder = RippleCarryAdder(bits=23)
+        self.rne_or = ORGate(neuron_template=nt)
+        self.rne_and = ANDGate(neuron_template=nt)
+        self.round_adder = RippleCarryAdder(bits=23, neuron_template=nt)
         
         # 特殊值检测
-        self.exp_all_one_and = nn.ModuleList([ANDGate() for _ in range(7)])
-        self.exp_zero_or = nn.ModuleList([ORGate() for _ in range(7)])
-        self.exp_zero_not = NOTGate()
-        self.exp_odd_not = NOTGate()  # 用于判断 (e-127) 奇偶
-        self.mant_zero_or = nn.ModuleList([ORGate() for _ in range(22)])
-        self.mant_zero_not = NOTGate()
+        self.exp_all_one_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(7)])
+        self.exp_zero_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(7)])
+        self.exp_zero_not = NOTGate(neuron_template=nt)
+        self.exp_odd_not = NOTGate(neuron_template=nt)  # 用于判断 (e-127) 奇偶
+        self.mant_zero_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(22)])
+        self.mant_zero_not = NOTGate(neuron_template=nt)
         
-        self.is_zero_and = ANDGate()
-        self.is_inf_and = ANDGate()
-        self.is_nan_and = ANDGate()
-        self.is_neg_and = ANDGate()
-        self.not_is_zero = NOTGate()
+        self.is_zero_and = ANDGate(neuron_template=nt)
+        self.is_inf_and = ANDGate(neuron_template=nt)
+        self.is_nan_and = ANDGate(neuron_template=nt)
+        self.is_neg_and = ANDGate(neuron_template=nt)
+        self.not_is_zero = NOTGate(neuron_template=nt)
         
         # sticky检测
-        self.sticky_or = nn.ModuleList([ORGate() for _ in range(49)])
+        self.sticky_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(49)])
         
         # 输出选择MUX
-        self.nan_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.inf_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.zero_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.radicand_mux = nn.ModuleList([MUXGate() for _ in range(25)])
+        self.nan_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.inf_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.zero_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.radicand_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(25)])
         
-        self.result_nan_or = ORGate()
+        self.result_nan_or = ORGate(neuron_template=nt)
         
     def forward(self, x):
         device = x.device

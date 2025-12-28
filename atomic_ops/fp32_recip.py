@@ -27,10 +27,13 @@ class SpikeFP32Reciprocal(nn.Module):
     - 1/0 = Inf
     - 1/Inf = 0
     - 1/NaN = NaN
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.divider = SpikeFP32Divider()
+        self.divider = SpikeFP32Divider(neuron_template=neuron_template)
         
     def forward(self, x):
         """

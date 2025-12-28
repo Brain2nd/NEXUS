@@ -3,6 +3,7 @@ SNN 逻辑门电路库 (SNN Logic Gates Library)
 ==========================================
 
 基于 Integrate-and-Fire (IF) 神经元实现的纯 SNN 逻辑门电路。
+支持统一的神经元模板机制，可在 IF/LIF 之间切换用于物理仿真。
 
 这些门电路是构建复杂 SNN 浮点运算的基础原子操作。
 
@@ -14,6 +15,13 @@ SNN 逻辑门电路库 (SNN Logic Gates Library)
 V[t] = V[t-1] + I[t]           # 膜电位积累
 S[t] = H(V[t] - V_th)          # 阈值判断 (Heaviside)
 V[t] = V[t] × (1 - S[t])       # 硬复位 (Hard Reset)
+```
+
+**LIF 神经元动力学** (物理仿真):
+```
+V[t] = β × V[t-1] + I[t]       # 膜电位泄漏 + 积累
+S[t] = H(V[t] - V_th)          # 阈值判断
+V[t] = V[t] - S[t] × V_th      # 软复位 (Soft Reset)
 ```
 
 **逻辑门实现**:
@@ -51,15 +59,23 @@ C = (A ∧ B) ∨ ((A ⊕ B) ∧ Cin)
 使用示例
 --------
 ```python
-from SNNTorch.atomic_ops.logic_gates import ANDGate, FullAdder
+from SNNTorch.atomic_ops.logic_gates import ANDGate, FullAdder, SimpleLIFNode
 
-# 基础 AND 门
+# 基础 AND 门 (默认 IF 神经元)
 and_gate = ANDGate()
 result = and_gate(a, b)  # a ∧ b
+
+# 使用 LIF 神经元进行物理仿真
+lif_template = SimpleLIFNode(beta=0.9)
+and_gate_lif = ANDGate(neuron_template=lif_template)
+result = and_gate_lif(a, b)
 
 # 全加器
 fa = FullAdder()
 s, c = fa(a, b, cin)  # s = a⊕b⊕cin, c = carry
+
+# LIF 版本全加器
+fa_lif = FullAdder(neuron_template=lif_template)
 ```
 
 作者: HumanBrain Project
@@ -67,7 +83,87 @@ s, c = fa(a, b, cin)  # s = a⊕b⊕cin, c = carry
 """
 import torch
 import torch.nn as nn
+from copy import deepcopy
 from spikingjelly.activation_based import neuron, surrogate
+
+
+# ==============================================================================
+# 神经元模板
+# ==============================================================================
+
+class SimpleLIFNode(nn.Module):
+    """简化的 LIF 神经元，用于物理硬件仿真
+    
+    **动力学方程**:
+    ```
+    V(t+1) = β × V(t) + I(t)    # 膜电位泄漏 + 积累
+    S(t) = H(V(t) - V_th)       # 脉冲发放
+    V(t) = V(t) - S(t) × V_th   # 软复位
+    ```
+    
+    **参数说明**:
+    - β (beta): 泄漏因子，0 < β ≤ 1
+      - β = 1.0: 退化为 IF 神经元（无泄漏）
+      - β < 1.0: 膜电位逐步衰减
+      - β → 0:   严重泄漏，信息快速丢失
+    
+    **物理意义**:
+    - β 对应神经元膜电阻和膜电容的时间常数
+    - 真实 MOF 硬件中 β ≈ 0.9-0.99（取决于工艺）
+    
+    Args:
+        beta: 膜电位泄漏因子 (0 < beta ≤ 1)
+        v_threshold: 发放阈值
+        v_reset: 复位电压 (软复位时使用 v_threshold)
+    """
+    def __init__(self, beta=1.0, v_threshold=1.0, v_reset=0.0):
+        super().__init__()
+        self.beta = beta
+        self.v_threshold = v_threshold
+        self.v_reset = v_reset
+        self.register_buffer('v', None)
+        
+    def forward(self, x):
+        if self.v is None:
+            self.v = torch.zeros_like(x)
+        
+        # LIF 动力学: V = beta * V + I
+        self.v = self.beta * self.v + x
+        
+        # 发放判断
+        spike = (self.v >= self.v_threshold).float()
+        
+        # 软复位
+        self.v = self.v - spike * self.v_threshold
+        
+        return spike
+    
+    def reset(self):
+        self.v = None
+
+
+def _create_neuron(template, threshold, v_reset=0.0):
+    """从模板创建指定阈值的神经元
+    
+    Args:
+        template: 神经元模板，None 则创建默认 IF 神经元
+        threshold: 目标阈值
+        v_reset: 复位电压
+    
+    Returns:
+        配置好的神经元实例
+    """
+    if template is None:
+        return neuron.IFNode(
+            v_threshold=threshold, 
+            v_reset=v_reset,
+            surrogate_function=surrogate.ATan()
+        )
+    else:
+        node = deepcopy(template)
+        node.v_threshold = threshold
+        node.v_reset = v_reset
+        return node
 
 
 # ==============================================================================
@@ -84,7 +180,7 @@ class BaseLogicGate(nn.Module):
 # ==============================================================================
 
 class ANDGate(BaseLogicGate):
-    """AND 门 - 使用 IF 神经元实现
+    """AND 门 - 使用 IF/LIF 神经元实现
     
     **数学原理**:
     ```
@@ -101,10 +197,13 @@ class ANDGate(BaseLogicGate):
     | 1 | 1 | 2 | 1    | ← 仅此情况 V > 1.5
     
     门电路计数: 1 个 IF 神经元
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, surrogate_function=surrogate.ATan()):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=1.5, v_reset=0.0, surrogate_function=surrogate_function)
+        self.node = _create_neuron(neuron_template, threshold=1.5)
         
     def forward(self, x_a, x_b):
         self.reset()
@@ -115,7 +214,7 @@ class ANDGate(BaseLogicGate):
 
 
 class ORGate(BaseLogicGate):
-    """OR 门 - 使用 IF 神经元实现
+    """OR 门 - 使用 IF/LIF 神经元实现
     
     **数学原理**:
     ```
@@ -132,10 +231,13 @@ class ORGate(BaseLogicGate):
     | 1 | 1 | 2 | 1    |
     
     门电路计数: 1 个 IF 神经元
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, surrogate_function=surrogate.ATan()):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=0.5, v_reset=0.0, surrogate_function=surrogate_function)
+        self.node = _create_neuron(neuron_template, threshold=0.5)
         
     def forward(self, x_a, x_b):
         self.reset()
@@ -146,7 +248,7 @@ class ORGate(BaseLogicGate):
 
 
 class XORGate(BaseLogicGate):
-    """XOR 门 - 使用两层 IF 神经元实现
+    """XOR 门 - 使用两层 IF/LIF 神经元实现
     
     **数学原理**:
     ```
@@ -165,11 +267,14 @@ class XORGate(BaseLogicGate):
     | 1 | 1 | 1 |   0    | 0    |
     
     门电路计数: 2 个 IF 神经元
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, surrogate_function=surrogate.ATan()):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.hidden_node = neuron.IFNode(v_threshold=1.5, v_reset=0.0, surrogate_function=surrogate_function)
-        self.out_node = neuron.IFNode(v_threshold=0.5, v_reset=0.0, surrogate_function=surrogate_function)
+        self.hidden_node = _create_neuron(neuron_template, threshold=1.5)
+        self.out_node = _create_neuron(neuron_template, threshold=0.5)
         
     def forward(self, x_a, x_b):
         self.reset()
@@ -183,7 +288,7 @@ class XORGate(BaseLogicGate):
 
 
 class NOTGate(BaseLogicGate):
-    """NOT 门 - 使用 IF 神经元 + 抑制性突触实现
+    """NOT 门 - 使用 IF/LIF 神经元 + 抑制性突触实现
     
     **数学原理**:
     ```
@@ -200,18 +305,22 @@ class NOTGate(BaseLogicGate):
     **实现细节**:
     - 偏置电流 (bias): 1.0 (恒定兴奋性)
     - 突触权重 (weight): -1.0 (抑制性)
+    - 注意: bias + weight * x 是突触电流计算，不是逻辑运算
     
     门电路计数: 1 个 IF 神经元
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, surrogate_function=surrogate.ATan()):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=0.5, v_reset=0.0, surrogate_function=surrogate_function)
+        self.node = _create_neuron(neuron_template, threshold=0.5)
         self.bias = 1.0    # 恒定偏置电流（兴奋性）
         self.weight = -1.0  # 抑制性突触权重
         
     def forward(self, x):
         self.reset()
-        current = self.bias + self.weight * x  # V = 1 - x
+        current = self.bias + self.weight * x  # 突触电流 = 1 - x
         return self.node(current)
     
     def reset(self):
@@ -221,14 +330,17 @@ class XNORGate(nn.Module):
     """XNOR门：当两个输入相同时输出1
     XNOR = NOT(XOR) = (a AND b) OR (NOT_a AND NOT_b)
     纯SNN实现：使用NOTGate代替直接的1-x操作
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.not_a = NOTGate()  # NOT(a)
-        self.not_b = NOTGate()  # NOT(b)
-        self.and1 = ANDGate()   # a AND b
-        self.and2 = ANDGate()   # NOT_a AND NOT_b
-        self.or1 = ORGate()
+        self.not_a = NOTGate(neuron_template)  # NOT(a)
+        self.not_b = NOTGate(neuron_template)  # NOT(b)
+        self.and1 = ANDGate(neuron_template)   # a AND b
+        self.and2 = ANDGate(neuron_template)   # NOT_a AND NOT_b
+        self.or1 = ORGate(neuron_template)
         
     def forward(self, a, b):
         self.reset()
@@ -246,12 +358,16 @@ class XNORGate(nn.Module):
         self.or1.reset()
 
 class AND4Gate(nn.Module):
-    """四输入AND门"""
-    def __init__(self):
+    """四输入AND门
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.and1 = ANDGate()
-        self.and2 = ANDGate()
-        self.and3 = ANDGate()
+        self.and1 = ANDGate(neuron_template)
+        self.and2 = ANDGate(neuron_template)
+        self.and3 = ANDGate(neuron_template)
         
     def forward(self, a, b, c, d):
         self.reset()
@@ -266,11 +382,14 @@ class AND4Gate(nn.Module):
 
 class SpikeDetector(nn.Module):
     """脉冲检测器：当输入>=1时输出1，否则输出0
-    使用阈值为0.5的IF神经元
+    使用阈值为0.5的IF/LIF神经元
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=0.5, v_reset=0.0, surrogate_function=surrogate.ATan())
+        self.node = _create_neuron(neuron_template, threshold=0.5)
         
     def forward(self, x):
         self.reset()
@@ -283,13 +402,16 @@ class MUXGate(nn.Module):
     """脉冲MUX选择器：MUX(S, A, B) = OR(AND(S, A), AND(NOT_S, B))
     当S=1时选择A，S=0时选择B
     纯SNN实现：使用NOTGate代替直接的1-x操作
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.not_s = NOTGate()  # NOT(S)
-        self.and1 = ANDGate()   # S AND A
-        self.and2 = ANDGate()   # NOT_S AND B
-        self.or1 = ORGate()
+        self.not_s = NOTGate(neuron_template)  # NOT(S)
+        self.and1 = ANDGate(neuron_template)   # S AND A
+        self.and2 = ANDGate(neuron_template)   # NOT_S AND B
+        self.or1 = ORGate(neuron_template)
         
     def forward(self, s, a, b):
         self.reset()
@@ -305,11 +427,15 @@ class MUXGate(nn.Module):
         self.or1.reset()
 
 class OR3Gate(nn.Module):
-    """三输入OR门"""
-    def __init__(self):
+    """三输入OR门
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.or1 = ORGate()
-        self.or2 = ORGate()
+        self.or1 = ORGate(neuron_template)
+        self.or2 = ORGate(neuron_template)
         
     def forward(self, a, b, c):
         self.reset()
@@ -343,13 +469,16 @@ class HalfAdder(nn.Module):
     
     门电路计数: 1 XOR + 1 AND = 3 IF 神经元
     
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    
     Returns:
         (S, C): 和位与进位位
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.xor1 = XORGate()
-        self.and1 = ANDGate()
+        self.xor1 = XORGate(neuron_template)
+        self.and1 = ANDGate(neuron_template)
         
     def forward(self, a, b):
         self.reset()
@@ -384,16 +513,19 @@ class FullAdder(nn.Module):
     
     门电路计数: 2 XOR + 2 AND + 1 OR = 7 IF 神经元
     
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    
     Returns:
         (S, Cout): 和位与进位输出
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.xor1 = XORGate()
-        self.xor2 = XORGate()
-        self.and1 = ANDGate()
-        self.and2 = ANDGate()
-        self.or1 = ORGate()
+        self.xor1 = XORGate(neuron_template)
+        self.xor2 = XORGate(neuron_template)
+        self.and1 = ANDGate(neuron_template)
+        self.and2 = ANDGate(neuron_template)
+        self.or1 = ORGate(neuron_template)
         
     def forward(self, a, b, cin):
         self.reset()
@@ -434,16 +566,17 @@ class RippleCarryAdder(nn.Module):
     
     Args:
         bits: 加法器位宽
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
         
     门电路计数: bits × 7 = 7N IF 神经元
     
     Returns:
         (Sum, Cout): N位和 与 最终进位
     """
-    def __init__(self, bits=4):
+    def __init__(self, bits=4, neuron_template=None):
         super().__init__()
         self.bits = bits
-        self.adders = nn.ModuleList([FullAdder() for _ in range(bits)])
+        self.adders = nn.ModuleList([FullAdder(neuron_template) for _ in range(bits)])
         
     def forward(self, A, B, Cin=None):
         """
@@ -475,13 +608,18 @@ class RippleCarryAdder(nn.Module):
             adder.reset()
 
 class ORTree(nn.Module):
-    """N输入OR树，纯SNN实现"""
-    def __init__(self, n_inputs):
+    """N输入OR树，纯SNN实现
+    
+    Args:
+        n_inputs: 输入数量
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, n_inputs, neuron_template=None):
         super().__init__()
         self.n_inputs = n_inputs
         # 构建二叉OR树
-        n_gates = n_inputs - 1
-        self.or_gates = nn.ModuleList([ORGate() for _ in range(n_gates)])
+        n_gates = n_inputs - 1 if n_inputs > 1 else 0
+        self.or_gates = nn.ModuleList([ORGate(neuron_template) for _ in range(n_gates)])
         
     def forward(self, inputs):
         """
@@ -492,6 +630,11 @@ class ORTree(nn.Module):
             current = inputs
         else:
             current = [inputs[..., i:i+1] for i in range(self.n_inputs)]
+        
+        if len(current) == 0:
+            return torch.zeros_like(current[0]) if current else None
+        if len(current) == 1:
+            return current[0]
         
         gate_idx = 0
         while len(current) > 1:
@@ -513,18 +656,28 @@ class ORTree(nn.Module):
 
 
 class ANDTree(nn.Module):
-    """N输入AND树，纯SNN实现"""
-    def __init__(self, n_inputs):
+    """N输入AND树，纯SNN实现
+    
+    Args:
+        n_inputs: 输入数量
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, n_inputs, neuron_template=None):
         super().__init__()
         self.n_inputs = n_inputs
-        n_gates = n_inputs - 1
-        self.and_gates = nn.ModuleList([ANDGate() for _ in range(n_gates)])
+        n_gates = n_inputs - 1 if n_inputs > 1 else 0
+        self.and_gates = nn.ModuleList([ANDGate(neuron_template) for _ in range(n_gates)])
         
     def forward(self, inputs):
         if isinstance(inputs, list):
             current = inputs
         else:
             current = [inputs[..., i:i+1] for i in range(self.n_inputs)]
+        
+        if len(current) == 0:
+            return torch.ones_like(current[0]) if current else None
+        if len(current) == 1:
+            return current[0]
         
         gate_idx = 0
         while len(current) > 1:
@@ -553,16 +706,20 @@ class FirstSpikeDetector(nn.Module):
     
     原理: first_spike[t] = spike[t] AND NOT(any_previous_spike[t])
     any_previous_spike[t] = OR(spike[0], spike[1], ..., spike[t-1])
+    
+    Args:
+        max_steps: 最大时间步
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, max_steps):
+    def __init__(self, max_steps, neuron_template=None):
         super().__init__()
         self.max_steps = max_steps
         # OR门用于累积"之前是否有脉冲"
-        self.or_gates = nn.ModuleList([ORGate() for _ in range(max_steps - 1)])
+        self.or_gates = nn.ModuleList([ORGate(neuron_template) for _ in range(max_steps - 1)])
         # AND门用于输出首脉冲
-        self.and_gates = nn.ModuleList([ANDGate() for _ in range(max_steps)])
+        self.and_gates = nn.ModuleList([ANDGate(neuron_template) for _ in range(max_steps)])
         # NOT门
-        self.not_gates = nn.ModuleList([NOTGate() for _ in range(max_steps)])
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template) for _ in range(max_steps)])
         
     def forward(self, spike_train):
         """
@@ -605,8 +762,15 @@ class OneHotToExponent(nn.Module):
     - 对于每个指数位：OR所有该位为1的位置的AND结果
     
     E[b] = OR over all k where exponent[k] has bit b=1
+    
+    Args:
+        max_steps: 最大时间步
+        n_integer_bits: 整数位数
+        bias: 指数偏置
+        e_bits: 指数位数
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, max_steps, n_integer_bits, bias=7, e_bits=4):
+    def __init__(self, max_steps, n_integer_bits, bias=7, e_bits=4, neuron_template=None):
         super().__init__()
         self.max_steps = max_steps
         self.e_bits = e_bits
@@ -634,9 +798,9 @@ class OneHotToExponent(nn.Module):
                     positions_with_bit.append(k)
             
             if len(positions_with_bit) > 0:
-                self.and_gates.append(nn.ModuleList([ANDGate() for _ in positions_with_bit]))
+                self.and_gates.append(nn.ModuleList([ANDGate(neuron_template) for _ in positions_with_bit]))
                 if len(positions_with_bit) > 1:
-                    self.or_trees.append(ORTree(len(positions_with_bit)))
+                    self.or_trees.append(ORTree(len(positions_with_bit), neuron_template))
                 else:
                     self.or_trees.append(None)
             else:
@@ -702,8 +866,13 @@ class NormalMantissaExtractor(nn.Module):
     
     纯SNN实现：
     M[i] = OR over all k: (first_spike[k] AND spike[k+1+i])
+    
+    Args:
+        max_steps: 最大时间步
+        m_bits: 尾数位数
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, max_steps, m_bits=3):
+    def __init__(self, max_steps, m_bits=3, neuron_template=None):
         super().__init__()
         self.max_steps = max_steps
         self.m_bits = m_bits
@@ -719,9 +888,9 @@ class NormalMantissaExtractor(nn.Module):
                               if k + 1 + m_idx < max_steps]
             
             if len(valid_positions) > 0:
-                self.and_gates.append(nn.ModuleList([ANDGate() for _ in valid_positions]))
+                self.and_gates.append(nn.ModuleList([ANDGate(neuron_template) for _ in valid_positions]))
                 if len(valid_positions) > 1:
-                    self.or_trees.append(ORTree(len(valid_positions)))
+                    self.or_trees.append(ORTree(len(valid_positions), neuron_template))
                 else:
                     self.or_trees.append(None)
             else:
@@ -788,12 +957,15 @@ class PriorityEncoder8(nn.Module):
     
     Input: P [batch, 8] (Little Endian: P0...P7)
     Output: Valid [batch, 8] (One-Hot, only the MSB '1' is active)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.or_chain = nn.ModuleList([ORGate() for _ in range(7)])
-        self.not_gates = nn.ModuleList([NOTGate() for _ in range(8)])
-        self.and_gates = nn.ModuleList([ANDGate() for _ in range(8)])
+        self.or_chain = nn.ModuleList([ORGate(neuron_template) for _ in range(7)])
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template) for _ in range(8)])
+        self.and_gates = nn.ModuleList([ANDGate(neuron_template) for _ in range(8)])
         
     def forward(self, P):
         p_bits = [P[..., i:i+1] for i in range(8)]
@@ -825,12 +997,16 @@ class PriorityEncoder8(nn.Module):
 
 
 class ShiftAmountEncoder8to3(nn.Module):
-    """Encode One-Hot 8-bit to 3-bit Binary - Pure SNN"""
-    def __init__(self):
+    """Encode One-Hot 8-bit to 3-bit Binary - Pure SNN
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.or_tree_s0 = ORTree(4)
-        self.or_tree_s1 = ORTree(4)
-        self.or_tree_s2 = ORTree(4)
+        self.or_tree_s0 = ORTree(4, neuron_template)
+        self.or_tree_s1 = ORTree(4, neuron_template)
+        self.or_tree_s2 = ORTree(4, neuron_template)
         
     def forward(self, V):
         v = [V[..., i:i+1] for i in range(8)]
@@ -853,12 +1029,16 @@ class ShiftAmountEncoder8to3(nn.Module):
 
 
 class BarrelShifter8(nn.Module):
-    """8-bit Left Barrel Shifter - Pure SNN"""
-    def __init__(self):
+    """8-bit Left Barrel Shifter - Pure SNN
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.mux_s4 = nn.ModuleList([MUXGate() for _ in range(8)])
-        self.mux_s2 = nn.ModuleList([MUXGate() for _ in range(8)])
-        self.mux_s1 = nn.ModuleList([MUXGate() for _ in range(8)])
+        self.mux_s4 = nn.ModuleList([MUXGate(neuron_template) for _ in range(8)])
+        self.mux_s2 = nn.ModuleList([MUXGate(neuron_template) for _ in range(8)])
+        self.mux_s1 = nn.ModuleList([MUXGate(neuron_template) for _ in range(8)])
         
     def forward(self, P, S):
         zeros = torch.zeros_like(P[..., 0:1])
@@ -901,16 +1081,20 @@ class BarrelShifter8(nn.Module):
 
 
 class ExponentAdjuster(nn.Module):
-    """Convert One-Hot Position to 5-bit Exponent Adjustment - Pure SNN"""
-    def __init__(self):
+    """Convert One-Hot Position to 5-bit Exponent Adjustment - Pure SNN
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.or_tree_e0 = ORTree(8)
-        self.or_tree_e1 = ORTree(8)
-        self.or_tree_e2 = ORTree(8)
-        self.or_tree_e3 = ORTree(8)
-        self.or_tree_e4 = ORTree(8)
-        self.nor_all_valid = NOTGate()
-        self.or_tree_valid = ORTree(8)
+        self.or_tree_e0 = ORTree(8, neuron_template)
+        self.or_tree_e1 = ORTree(8, neuron_template)
+        self.or_tree_e2 = ORTree(8, neuron_template)
+        self.or_tree_e3 = ORTree(8, neuron_template)
+        self.or_tree_e4 = ORTree(8, neuron_template)
+        self.nor_all_valid = NOTGate(neuron_template)
+        self.or_tree_valid = ORTree(8, neuron_template)
         
     def forward(self, V):
         v = [V[..., i:i+1] for i in range(8)]
@@ -951,13 +1135,17 @@ class ExponentAdjuster(nn.Module):
 
 
 class NewNormalizationUnit(nn.Module):
-    """Integrated Pure SNN Normalization Unit"""
-    def __init__(self):
+    """Integrated Pure SNN Normalization Unit
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.priority_encoder = PriorityEncoder8()
-        self.shift_encoder = ShiftAmountEncoder8to3()
-        self.barrel_shifter = BarrelShifter8()
-        self.exponent_adjuster = ExponentAdjuster()
+        self.priority_encoder = PriorityEncoder8(neuron_template)
+        self.shift_encoder = ShiftAmountEncoder8to3(neuron_template)
+        self.barrel_shifter = BarrelShifter8(neuron_template)
+        self.exponent_adjuster = ExponentAdjuster(neuron_template)
         
     def forward(self, P):
         # P is Little Endian [P0...P7]
@@ -1009,21 +1197,26 @@ class TemporalExponentGenerator(nn.Module):
     - 每个时间步，如果还没有检测到首脉冲，计数器减1。
     - 当检测到首脉冲时，当前的计数器值即为指数 E。
     - 如果减到0还没有首脉冲，保持为0 (Subnormal/Zero)。
+    
+    Args:
+        start_value: 初始计数器值
+        bits: 计数器位数
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, start_value=15, bits=4):
+    def __init__(self, start_value=15, bits=4, neuron_template=None):
         super().__init__()
         self.bits = bits
         self.start_value = start_value
         
         # 4-bit 减法器 (加 -1)
-        self.adder = RippleCarryAdder(bits=bits)
+        self.adder = RippleCarryAdder(bits=bits, neuron_template=neuron_template)
         
         # 状态寄存器 (4位)
         self.register_buffer('state', None)
         
         # 辅助门
-        self.mux_update = nn.ModuleList([MUXGate() for _ in range(bits)])
-        self.not_gate = NOTGate()
+        self.mux_update = nn.ModuleList([MUXGate(neuron_template) for _ in range(bits)])
+        self.not_gate = NOTGate(neuron_template)
         
     def forward(self, has_fired, time_step_pulse):
         batch_size = has_fired.shape[0]
@@ -1078,27 +1271,32 @@ class DelayNode(nn.Module):
 
 
 class ArrayMultiplier4x4_Strict(nn.Module):
-    def __init__(self):
+    """4x4 位阵列乘法器
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
+    """
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.pp_gates = nn.ModuleList([ANDGate() for _ in range(16)])
+        self.pp_gates = nn.ModuleList([ANDGate(neuron_template) for _ in range(16)])
         
         # Row 1: 1 HA, 3 FA
-        self.row1_ha = HalfAdder()
-        self.row1_fa1 = FullAdder()
-        self.row1_fa2 = FullAdder()
-        self.row1_fa3 = FullAdder() 
+        self.row1_ha = HalfAdder(neuron_template)
+        self.row1_fa1 = FullAdder(neuron_template)
+        self.row1_fa2 = FullAdder(neuron_template)
+        self.row1_fa3 = FullAdder(neuron_template) 
         
         # Row 2: 1 HA, 3 FA
-        self.row2_ha = HalfAdder()
-        self.row2_fa1 = FullAdder()
-        self.row2_fa2 = FullAdder()
-        self.row2_fa3 = FullAdder()
+        self.row2_ha = HalfAdder(neuron_template)
+        self.row2_fa1 = FullAdder(neuron_template)
+        self.row2_fa2 = FullAdder(neuron_template)
+        self.row2_fa3 = FullAdder(neuron_template)
         
         # Row 3: 1 HA, 3 FA
-        self.row3_ha = HalfAdder()
-        self.row3_fa1 = FullAdder()
-        self.row3_fa2 = FullAdder()
-        self.row3_fa3 = FullAdder()
+        self.row3_ha = HalfAdder(neuron_template)
+        self.row3_fa1 = FullAdder(neuron_template)
+        self.row3_fa2 = FullAdder(neuron_template)
+        self.row3_fa3 = FullAdder(neuron_template)
 
     def forward(self, A, B):
         # Generate Partial Products
@@ -1159,12 +1357,15 @@ class Denormalizer(nn.Module):
     
     Input: P [batch, 8], Shift [batch, 3]
     Output: P >> Shift
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.mux_s4 = nn.ModuleList([MUXGate() for _ in range(8)])
-        self.mux_s2 = nn.ModuleList([MUXGate() for _ in range(8)])
-        self.mux_s1 = nn.ModuleList([MUXGate() for _ in range(8)])
+        self.mux_s4 = nn.ModuleList([MUXGate(neuron_template) for _ in range(8)])
+        self.mux_s2 = nn.ModuleList([MUXGate(neuron_template) for _ in range(8)])
+        self.mux_s1 = nn.ModuleList([MUXGate(neuron_template) for _ in range(8)])
         
     def forward(self, P, S):
         # P: Little Endian

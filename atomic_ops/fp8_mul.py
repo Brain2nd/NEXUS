@@ -16,243 +16,247 @@ class SpikeFP8Multiplier(nn.Module):
     - 完整的subnormal输出处理
     
     100%纯SNN：所有操作仅使用IF神经元门电路
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template  # 简写
         
         # 符号XOR
-        self.sign_xor = XORGate()
+        self.sign_xor = XORGate(neuron_template=nt)
         
         # 指数加法器 (4-bit + 4-bit)
-        self.exp_adder = RippleCarryAdder(bits=5)  # 5位防溢出
+        self.exp_adder = RippleCarryAdder(bits=5, neuron_template=nt)  # 5位防溢出
         
         # 减bias用的加法器 (加-7的补码 = 加11001)
-        self.bias_sub_adder = RippleCarryAdder(bits=5)
+        self.bias_sub_adder = RippleCarryAdder(bits=5, neuron_template=nt)
         
         # 尾数乘法器
-        self.mantissa_mul = ArrayMultiplier4x4_Strict()
+        self.mantissa_mul = ArrayMultiplier4x4_Strict(neuron_template=nt)
         
         # 规格化单元 (替代原来的简单溢出检测)
-        self.norm_unit = NewNormalizationUnit()
+        self.norm_unit = NewNormalizationUnit(neuron_template=nt)
         
         # 指数修正加法器 (E_raw + Shift)
-        self.exp_norm_adder = RippleCarryAdder(bits=5)
+        self.exp_norm_adder = RippleCarryAdder(bits=5, neuron_template=nt)
         
         # Denormalization components
-        self.denormalizer = Denormalizer()
-        self.e_inv_gate = NOTGate()
-        self.shift_calc_adder = RippleCarryAdder(bits=5)
-        self.mux_p_final = MUXGate()
-        self.mux_e_final = MUXGate()
-        self.denorm_or = ORGate()
-        self.denorm_not = NOTGate()
-        self.denorm_check_zero = OR3Gate() # Check if E=0 (bits 0,1,2)
-        self.denorm_check_zero2 = ORGate() # Check bits 3,4
-        self.denorm_is_zero = NOTGate()
+        self.denormalizer = Denormalizer(neuron_template=nt)
+        self.e_inv_gate = NOTGate(neuron_template=nt)
+        self.shift_calc_adder = RippleCarryAdder(bits=5, neuron_template=nt)
+        self.mux_p_final = MUXGate(neuron_template=nt)
+        self.mux_e_final = MUXGate(neuron_template=nt)
+        self.denorm_or = ORGate(neuron_template=nt)
+        self.denorm_not = NOTGate(neuron_template=nt)
+        self.denorm_check_zero = OR3Gate(neuron_template=nt) # Check if E=0 (bits 0,1,2)
+        self.denorm_check_zero2 = ORGate(neuron_template=nt) # Check bits 3,4
+        self.denorm_is_zero = NOTGate(neuron_template=nt)
         
         # 尾数溢出后的MUX
-        self.mux_m0_final = MUXGate()
-        self.mux_m1_final = MUXGate()
-        self.mux_m2_final = MUXGate()
+        self.mux_m0_final = MUXGate(neuron_template=nt)
+        self.mux_m1_final = MUXGate(neuron_template=nt)
+        self.mux_m2_final = MUXGate(neuron_template=nt)
         
         # Sticky OR
-        self.sticky_or_overflow = OR3Gate()
-        self.sticky_or_no_overflow = ORGate()
-        self.sticky_or_extra = ORGate()  # 合并来自 NormUnit 的 sticky_extra
-        self.mux_sticky = MUXGate()
-        self.sub_sticky_or = ORGate()   # round_bit OR sticky
-        self.sub_sticky_or2 = ORGate()  # m2_raw OR sub_sticky_base
+        self.sticky_or_overflow = OR3Gate(neuron_template=nt)
+        self.sticky_or_no_overflow = ORGate(neuron_template=nt)
+        self.sticky_or_extra = ORGate(neuron_template=nt)  # 合并来自 NormUnit 的 sticky_extra
+        self.mux_sticky = MUXGate(neuron_template=nt)
+        self.sub_sticky_or = ORGate(neuron_template=nt)   # round_bit OR sticky
+        self.sub_sticky_or2 = ORGate(neuron_template=nt)  # m2_raw OR sub_sticky_base
         
         # RNE逻辑: do_round = round_bit AND (sticky OR m2)
-        self.rne_or = ORGate()
-        self.rne_and = ANDGate()
+        self.rne_or = ORGate(neuron_template=nt)
+        self.rne_and = ANDGate(neuron_template=nt)
         
         # Subnormal RNE 逻辑 (独立的门)
-        self.sub_rne_or = ORGate()
-        self.sub_rne_and = ANDGate()
-        self.sub_round_mux = MUXGate()  # 选择 sub_round: overflow ? m2_normal : sticky_extra
+        self.sub_rne_or = ORGate(neuron_template=nt)
+        self.sub_rne_and = ANDGate(neuron_template=nt)
+        self.sub_round_mux = MUXGate(neuron_template=nt)  # 选择 sub_round: overflow ? m2_normal : sticky_extra
         
         # E=-1 RNE 逻辑
-        self.em1_rne_or = ORGate()
-        self.em1_rne_and = ANDGate()
-        self.em1_sticky_or = ORGate()  # m2 OR round_bit
-        self.em1_sticky_or2 = ORGate()  # (m2 OR round_bit) OR sticky
+        self.em1_rne_or = ORGate(neuron_template=nt)
+        self.em1_rne_and = ANDGate(neuron_template=nt)
+        self.em1_sticky_or = ORGate(neuron_template=nt)  # m2 OR round_bit
+        self.em1_sticky_or2 = ORGate(neuron_template=nt)  # (m2 OR round_bit) OR sticky
         
         # E=-2 RNE 逻辑
-        self.em2_rne_or = ORGate()
-        self.em2_rne_and = ANDGate()
-        self.em2_sticky_or = ORGate()  # m1 OR m2
-        self.em2_sticky_or2 = ORGate()  # (m1 OR m2) OR round_bit
+        self.em2_rne_or = ORGate(neuron_template=nt)
+        self.em2_rne_and = ANDGate(neuron_template=nt)
+        self.em2_sticky_or = ORGate(neuron_template=nt)  # m1 OR m2
+        self.em2_sticky_or2 = ORGate(neuron_template=nt)  # (m1 OR m2) OR round_bit
         
         # E=-3 RNE 逻辑 (sticky 需要包含 round_bit)
-        self.em3_sticky_or2 = ORGate()  # (m0 OR m1 OR m2) OR round_bit
+        self.em3_sticky_or2 = ORGate(neuron_template=nt)  # (m0 OR m1 OR m2) OR round_bit
         
         # 舍入加法器 (3-bit mantissa + round_bit)
-        self.round_ha0 = HalfAdder()
-        self.round_ha1 = HalfAdder()
-        self.round_ha2 = HalfAdder()
+        self.round_ha0 = HalfAdder(neuron_template=nt)
+        self.round_ha1 = HalfAdder(neuron_template=nt)
+        self.round_ha2 = HalfAdder(neuron_template=nt)
         
         # 指数+1加法器 (用于m_carry进位)
-        self.exp_inc_adder = RippleCarryAdder(bits=5)
+        self.exp_inc_adder = RippleCarryAdder(bits=5, neuron_template=nt)
         
         # ===== 输入零检测 (纯SNN) =====
         # 真正的零: E=0 AND M=0
         # E=0检测：~E[0] AND ~E[1] AND ~E[2] AND ~E[3]
-        self.a_not_e0 = NOTGate()
-        self.a_not_e1 = NOTGate()
-        self.a_not_e2 = NOTGate()
-        self.a_not_e3 = NOTGate()
-        self.a_and_e01 = ANDGate()
-        self.a_and_e23 = ANDGate()
-        self.a_e_is_zero = ANDGate()
+        self.a_not_e0 = NOTGate(neuron_template=nt)
+        self.a_not_e1 = NOTGate(neuron_template=nt)
+        self.a_not_e2 = NOTGate(neuron_template=nt)
+        self.a_not_e3 = NOTGate(neuron_template=nt)
+        self.a_and_e01 = ANDGate(neuron_template=nt)
+        self.a_and_e23 = ANDGate(neuron_template=nt)
+        self.a_e_is_zero = ANDGate(neuron_template=nt)
         # M=0检测：~M[0] AND ~M[1] AND ~M[2]
-        self.a_not_m0 = NOTGate()
-        self.a_not_m1 = NOTGate()
-        self.a_not_m2 = NOTGate()
-        self.a_and_m01 = ANDGate()
-        self.a_m_is_zero = ANDGate()
+        self.a_not_m0 = NOTGate(neuron_template=nt)
+        self.a_not_m1 = NOTGate(neuron_template=nt)
+        self.a_not_m2 = NOTGate(neuron_template=nt)
+        self.a_and_m01 = ANDGate(neuron_template=nt)
+        self.a_m_is_zero = ANDGate(neuron_template=nt)
         # 真正的零: E=0 AND M=0
-        self.a_is_true_zero = ANDGate()
+        self.a_is_true_zero = ANDGate(neuron_template=nt)
         
-        self.b_not_e0 = NOTGate()
-        self.b_not_e1 = NOTGate()
-        self.b_not_e2 = NOTGate()
-        self.b_not_e3 = NOTGate()
-        self.b_and_e01 = ANDGate()
-        self.b_and_e23 = ANDGate()
-        self.b_e_is_zero = ANDGate()
+        self.b_not_e0 = NOTGate(neuron_template=nt)
+        self.b_not_e1 = NOTGate(neuron_template=nt)
+        self.b_not_e2 = NOTGate(neuron_template=nt)
+        self.b_not_e3 = NOTGate(neuron_template=nt)
+        self.b_and_e01 = ANDGate(neuron_template=nt)
+        self.b_and_e23 = ANDGate(neuron_template=nt)
+        self.b_e_is_zero = ANDGate(neuron_template=nt)
         # M=0检测
-        self.b_not_m0 = NOTGate()
-        self.b_not_m1 = NOTGate()
-        self.b_not_m2 = NOTGate()
-        self.b_and_m01 = ANDGate()
-        self.b_m_is_zero = ANDGate()
+        self.b_not_m0 = NOTGate(neuron_template=nt)
+        self.b_not_m1 = NOTGate(neuron_template=nt)
+        self.b_not_m2 = NOTGate(neuron_template=nt)
+        self.b_and_m01 = ANDGate(neuron_template=nt)
+        self.b_m_is_zero = ANDGate(neuron_template=nt)
         # 真正的零
-        self.b_is_true_zero = ANDGate()
+        self.b_is_true_zero = ANDGate(neuron_template=nt)
         
-        self.input_zero_or = ORGate()  # A=0 OR B=0
+        self.input_zero_or = ORGate(neuron_template=nt)  # A=0 OR B=0
         
         # ===== 输入subnormal检测 (纯SNN) =====
         # subnormal = E=0 AND M≠0
-        self.a_not_m_is_zero = NOTGate()
-        self.a_is_subnormal = ANDGate()  # E=0 AND NOT(M=0)
-        self.b_not_m_is_zero = NOTGate()
-        self.b_is_subnormal = ANDGate()
+        self.a_not_m_is_zero = NOTGate(neuron_template=nt)
+        self.a_is_subnormal = ANDGate(neuron_template=nt)  # E=0 AND NOT(M=0)
+        self.b_not_m_is_zero = NOTGate(neuron_template=nt)
+        self.b_is_subnormal = ANDGate(neuron_template=nt)
         
         # 尾数前导位选择 (subnormal用0, normal用1)
-        self.mux_a_leading = MUXGate()  # NOT(a_is_subnormal) ? 1 : 0
-        self.mux_b_leading = MUXGate()
+        self.mux_a_leading = MUXGate(neuron_template=nt)  # NOT(a_is_subnormal) ? 1 : 0
+        self.mux_b_leading = MUXGate(neuron_template=nt)
         
         # 指数修正：subnormal的有效指数是1而不是0
         # E_eff = subnormal ? 1 : E
-        self.mux_a_e0 = MUXGate()
-        self.mux_a_e1 = MUXGate()
-        self.mux_a_e2 = MUXGate()
-        self.mux_a_e3 = MUXGate()
-        self.mux_b_e0 = MUXGate()
-        self.mux_b_e1 = MUXGate()
-        self.mux_b_e2 = MUXGate()
-        self.mux_b_e3 = MUXGate()
+        self.mux_a_e0 = MUXGate(neuron_template=nt)
+        self.mux_a_e1 = MUXGate(neuron_template=nt)
+        self.mux_a_e2 = MUXGate(neuron_template=nt)
+        self.mux_a_e3 = MUXGate(neuron_template=nt)
+        self.mux_b_e0 = MUXGate(neuron_template=nt)
+        self.mux_b_e1 = MUXGate(neuron_template=nt)
+        self.mux_b_e2 = MUXGate(neuron_template=nt)
+        self.mux_b_e3 = MUXGate(neuron_template=nt)
         
         # ===== 输出E=0检测 (e_final_5) =====
-        self.out_not_e0 = NOTGate()
-        self.out_not_e1 = NOTGate()
-        self.out_not_e2 = NOTGate()
-        self.out_not_e3 = NOTGate()
-        self.out_and_01 = ANDGate()
-        self.out_and_23 = ANDGate()
-        self.out_e_is_zero = ANDGate()
+        self.out_not_e0 = NOTGate(neuron_template=nt)
+        self.out_not_e1 = NOTGate(neuron_template=nt)
+        self.out_not_e2 = NOTGate(neuron_template=nt)
+        self.out_not_e3 = NOTGate(neuron_template=nt)
+        self.out_and_01 = ANDGate(neuron_template=nt)
+        self.out_and_23 = ANDGate(neuron_template=nt)
+        self.out_e_is_zero = ANDGate(neuron_template=nt)
         
         # ===== e_normalized == 0 检测 =====
-        self.norm_not_e0 = NOTGate()
-        self.norm_not_e1 = NOTGate()
-        self.norm_not_e2 = NOTGate()
-        self.norm_not_e3 = NOTGate()
-        self.norm_and_01 = ANDGate()
-        self.norm_and_23 = ANDGate()
-        self.norm_e_is_zero = ANDGate()
-        self.e_both_zero_and = ANDGate()  # e_final=0 AND e_norm=0
+        self.norm_not_e0 = NOTGate(neuron_template=nt)
+        self.norm_not_e1 = NOTGate(neuron_template=nt)
+        self.norm_not_e2 = NOTGate(neuron_template=nt)
+        self.norm_not_e3 = NOTGate(neuron_template=nt)
+        self.norm_and_01 = ANDGate(neuron_template=nt)
+        self.norm_and_23 = ANDGate(neuron_template=nt)
+        self.norm_e_is_zero = ANDGate(neuron_template=nt)
+        self.e_both_zero_and = ANDGate(neuron_template=nt)  # e_final=0 AND e_norm=0
         
         # 下溢检测：符号位=1表示负数
-        self.underflow_not = NOTGate()
+        self.underflow_not = NOTGate(neuron_template=nt)
         
         # is_subnormal = e_both_zero AND (NOT is_negative_norm)
-        self.is_subnormal_and = ANDGate()
+        self.is_subnormal_and = ANDGate(neuron_template=nt)
         
         # subnormal或underflow的OR
-        self.sub_or_under = ORGate()
+        self.sub_or_under = ORGate(neuron_template=nt)
         
         # ===== Subnormal尾数舍入 (纯SNN HalfAdder) =====
-        self.sub_round_ha0 = HalfAdder()  # m2 + round_bit
-        self.sub_round_ha1 = HalfAdder()  # m1 + carry
-        self.sub_round_ha2 = HalfAdder()  # m0 + carry
+        self.sub_round_ha0 = HalfAdder(neuron_template=nt)  # m2 + round_bit
+        self.sub_round_ha1 = HalfAdder(neuron_template=nt)  # m1 + carry
+        self.sub_round_ha2 = HalfAdder(neuron_template=nt)  # m0 + carry
         
         # 当E=0舍入产生进位时，饱和到M=7
-        self.sub_saturate_m0 = MUXGate()
-        self.sub_saturate_m1 = MUXGate()
-        self.sub_saturate_m2 = MUXGate()
+        self.sub_saturate_m0 = MUXGate(neuron_template=nt)
+        self.sub_saturate_m1 = MUXGate(neuron_template=nt)
+        self.sub_saturate_m2 = MUXGate(neuron_template=nt)
         
         # Subnormal 溢出时 E=1 的 MUX
-        self.sub_overflow_and = ANDGate()  # is_subnormal AND sub_c2
-        self.mux_sub_overflow_e0 = MUXGate()  # 溢出时 e0=1
+        self.sub_overflow_and = ANDGate(neuron_template=nt)  # is_subnormal AND sub_c2
+        self.mux_sub_overflow_e0 = MUXGate(neuron_template=nt)  # 溢出时 e0=1
         
         # ===== E=-1检测 (纯SNN) =====
         # E=-1 = 11111 (5位补码)
-        self.minus1_and_01 = ANDGate()
-        self.minus1_and_23 = ANDGate()
-        self.minus1_and_0123 = ANDGate()
-        self.minus1_and_all = ANDGate()
+        self.minus1_and_01 = ANDGate(neuron_template=nt)
+        self.minus1_and_23 = ANDGate(neuron_template=nt)
+        self.minus1_and_0123 = ANDGate(neuron_template=nt)
+        self.minus1_and_all = ANDGate(neuron_template=nt)
         
         # ===== E=-1尾数舍入 (纯SNN HalfAdder) =====
-        self.e_m1_round_ha0 = HalfAdder()
-        self.e_m1_round_ha1 = HalfAdder()
-        self.e_m1_round_ha2 = HalfAdder()  # 用于 m0 进位
+        self.e_m1_round_ha0 = HalfAdder(neuron_template=nt)
+        self.e_m1_round_ha1 = HalfAdder(neuron_template=nt)
+        self.e_m1_round_ha2 = HalfAdder(neuron_template=nt)  # 用于 m0 进位
         
         # ===== E=-2检测 (纯SNN) =====
         # E=-2 = 11110 (5位补码)
         # E[4]=1, E[3]=1, E[2]=1, E[1]=1, E[0]=0
-        self.minus2_not_e0 = NOTGate()
-        self.minus2_and_01 = ANDGate()
-        self.minus2_and_23 = ANDGate()
-        self.minus2_and_0123 = ANDGate()
-        self.minus2_and_all = ANDGate()
+        self.minus2_not_e0 = NOTGate(neuron_template=nt)
+        self.minus2_and_01 = ANDGate(neuron_template=nt)
+        self.minus2_and_23 = ANDGate(neuron_template=nt)
+        self.minus2_and_0123 = ANDGate(neuron_template=nt)
+        self.minus2_and_all = ANDGate(neuron_template=nt)
         
         # ===== E=-2尾数舍入 (纯SNN HalfAdder) =====
-        self.e_m2_round_ha0 = HalfAdder()
-        self.e_m2_round_ha1 = HalfAdder()
-        self.e_m2_round_ha2 = HalfAdder()  # 用于 m0 进位
+        self.e_m2_round_ha0 = HalfAdder(neuron_template=nt)
+        self.e_m2_round_ha1 = HalfAdder(neuron_template=nt)
+        self.e_m2_round_ha2 = HalfAdder(neuron_template=nt)  # 用于 m0 进位
         
         # ===== E=-3检测 (纯SNN) =====
         # E=-3 = 11101 (5位补码)
         # E[4]=1, E[3]=1, E[2]=1, E[1]=0, E[0]=1
-        self.minus3_not_e1 = NOTGate()
-        self.minus3_and_01 = ANDGate()
-        self.minus3_and_23 = ANDGate()
-        self.minus3_and_0123 = ANDGate()
-        self.minus3_and_all = ANDGate()
+        self.minus3_not_e1 = NOTGate(neuron_template=nt)
+        self.minus3_and_01 = ANDGate(neuron_template=nt)
+        self.minus3_and_23 = ANDGate(neuron_template=nt)
+        self.minus3_and_0123 = ANDGate(neuron_template=nt)
+        self.minus3_and_all = ANDGate(neuron_template=nt)
         
         # E=-3 RNE 逻辑
-        self.em3_sticky_or = OR3Gate()
-        self.em3_rne_or = ORGate()
-        self.em3_rne_and = ANDGate()
+        self.em3_sticky_or = OR3Gate(neuron_template=nt)
+        self.em3_rne_or = ORGate(neuron_template=nt)
+        self.em3_rne_and = ANDGate(neuron_template=nt)
         
         # E=-3 尾数舍入
-        self.e_m3_round_ha0 = HalfAdder()
+        self.e_m3_round_ha0 = HalfAdder(neuron_template=nt)
         
         # ===== E=-2 vs E=-1 vs 更深选择 =====
-        self.mux_m2_m0 = MUXGate()
-        self.mux_m2_m1 = MUXGate()
-        self.mux_m2_m2 = MUXGate()
+        self.mux_m2_m0 = MUXGate(neuron_template=nt)
+        self.mux_m2_m1 = MUXGate(neuron_template=nt)
+        self.mux_m2_m2 = MUXGate(neuron_template=nt)
         
         # ===== E=-1 vs (E=-2或更深)选择 =====
-        self.mux_under_m0 = MUXGate()
-        self.mux_under_m1 = MUXGate()
-        self.mux_under_m2 = MUXGate()
+        self.mux_under_m0 = MUXGate(neuron_template=nt)
+        self.mux_under_m1 = MUXGate(neuron_template=nt)
+        self.mux_under_m2 = MUXGate(neuron_template=nt)
         
         # ===== subnormal vs underflow选择 (纯SNN MUX) =====
-        self.mux_sub_m0 = MUXGate()
-        self.mux_sub_m1 = MUXGate()
-        self.mux_sub_m2 = MUXGate()
+        self.mux_sub_m0 = MUXGate(neuron_template=nt)
+        self.mux_sub_m1 = MUXGate(neuron_template=nt)
+        self.mux_sub_m2 = MUXGate(neuron_template=nt)
         
         # ===== 最终结果选择MUX =====
         self.mux_final_e0 = MUXGate()

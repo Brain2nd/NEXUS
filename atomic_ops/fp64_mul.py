@@ -31,14 +31,15 @@ from .fp64_components import Comparator11Bit
 # ==============================================================================
 class VecRippleCarryAdder108Bit(nn.Module):
     """108位加法器 - 向量化版本 (LSB first)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 108
-        self.xor1 = VecXOR()
-        self.xor2 = VecXOR()
-        self.and1 = VecAND()
-        self.and2 = VecAND()
-        self.or1 = VecOR()
+        nt = neuron_template
+        self.xor1 = VecXOR(neuron_template=nt)
+        self.xor2 = VecXOR(neuron_template=nt)
+        self.and1 = VecAND(neuron_template=nt)
+        self.and2 = VecAND(neuron_template=nt)
+        self.or1 = VecOR(neuron_template=nt)
         
     def forward(self, A, B, Cin=None):
         """A + B, LSB first"""
@@ -90,13 +91,14 @@ class VecArrayMultiplier54x54(nn.Module):
     输入: A, B: [..., 54] (LSB first)
     输出: P: [..., 108] (LSB first)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         # 部分积生成: 使用单个VecAND处理所有位
-        self.pp_and = VecAND()
+        self.pp_and = VecAND(neuron_template=nt)
         # 累加器链
         self.accum_adders = nn.ModuleList([
-            VecRippleCarryAdder108Bit() for _ in range(53)
+            VecRippleCarryAdder108Bit(neuron_template=nt) for _ in range(53)
         ])
         
     def forward(self, A, B):
@@ -150,13 +152,14 @@ class VecLeadingZeroDetector108(nn.Module):
     输入: X[107:0] MSB first
     输出: LZC[6:0] 前导零个数 (MSB first)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.vec_not = VecNOT()
-        self.vec_and = VecAND()
-        self.vec_or = VecOR()
-        self.vec_mux = VecMUX()
-        self.vec_or_tree = VecORTree()
+        nt = neuron_template
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_or = VecOR(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_or_tree = VecORTree(neuron_template=nt)
         
     def forward(self, X):
         """X: [..., 108] MSB first, returns: [..., 7] LZC MSB first"""
@@ -203,11 +206,11 @@ class VecLeadingZeroDetector108(nn.Module):
 # ==============================================================================
 class VecBarrelShifterLeft108(nn.Module):
     """108位桶形左移位器 - 向量化版本"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 108
         self.shift_bits = 7
-        self.vec_mux = VecMUX()
+        self.vec_mux = VecMUX(neuron_template=neuron_template)
             
     def forward(self, X, shift):
         """X: [..., 108], shift: [..., 7] (MSB first)"""
@@ -242,9 +245,9 @@ class VecBarrelShifterLeft108(nn.Module):
 # ==============================================================================
 class VecAdder12Bit(nn.Module):
     """12位加法器 - 向量化版本"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.adder = VecAdder(12)
+        self.adder = VecAdder(12, neuron_template=neuron_template)
         
     def forward(self, A, B, Cin=None):
         return self.adder(A, B, Cin)
@@ -255,9 +258,9 @@ class VecAdder12Bit(nn.Module):
 
 class VecSubtractor12Bit(nn.Module):
     """12位减法器 - 向量化版本"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.subtractor = VecSubtractor(12)
+        self.subtractor = VecSubtractor(12, neuron_template=neuron_template)
         
     def forward(self, A, B, Bin=None):
         return self.subtractor(A, B)
@@ -274,35 +277,39 @@ class SpikeFP64Multiplier(nn.Module):
     
     输入: A, B: [..., 64] FP64脉冲 [S | E10..E0 | M51..M0]
     输出: [..., 64] FP64脉冲
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # ===== 向量化基础门电路 =====
-        self.vec_and = VecAND()
-        self.vec_or = VecOR()
-        self.vec_xor = VecXOR()
-        self.vec_not = VecNOT()
-        self.vec_mux = VecMUX()
-        self.vec_or_tree = VecORTree()
-        self.vec_and_tree = VecANDTree()
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_or = VecOR(neuron_template=nt)
+        self.vec_xor = VecXOR(neuron_template=nt)
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_or_tree = VecORTree(neuron_template=nt)
+        self.vec_and_tree = VecANDTree(neuron_template=nt)
         
         # ===== 指数运算 =====
-        self.exp_adder = VecAdder12Bit()
-        self.bias_sub = VecSubtractor12Bit()
-        self.exp_inc = VecAdder12Bit()
-        self.exp_lzc_sub = VecSubtractor12Bit()
+        self.exp_adder = VecAdder12Bit(neuron_template=nt)
+        self.bias_sub = VecSubtractor12Bit(neuron_template=nt)
+        self.exp_inc = VecAdder12Bit(neuron_template=nt)
+        self.exp_lzc_sub = VecSubtractor12Bit(neuron_template=nt)
         
         # ===== 尾数乘法 =====
-        self.mantissa_mul = VecArrayMultiplier54x54()
+        self.mantissa_mul = VecArrayMultiplier54x54(neuron_template=nt)
         
         # ===== 规格化 =====
-        self.lzd = VecLeadingZeroDetector108()
-        self.norm_shifter = VecBarrelShifterLeft108()
+        self.lzd = VecLeadingZeroDetector108(neuron_template=nt)
+        self.norm_shifter = VecBarrelShifterLeft108(neuron_template=nt)
         
         # ===== 舍入 =====
-        self.round_adder = RippleCarryAdder(bits=53)
-        self.exp_round_inc = RippleCarryAdder(bits=11)
+        self.round_adder = RippleCarryAdder(bits=53, neuron_template=nt)
+        self.exp_round_inc = RippleCarryAdder(bits=11, neuron_template=nt)
         
     def forward(self, A, B):
         """

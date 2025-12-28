@@ -18,19 +18,20 @@ from .vec_logic_gates import (VecAND, VecOR, VecXOR, VecNOT, VecMUX,
 # ==============================================================================
 class Comparator11Bit(nn.Module):
     """11位比较器 (FP64指数) - 向量化SNN实现"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 11
+        nt = neuron_template
         
         # 向量化门电路
-        self.vec_xor = VecXOR()
-        self.vec_not_xor = VecNOT()
-        self.vec_not_b = VecNOT()
-        self.vec_gt_and = VecAND()
-        self.eq_tree = VecANDTree()
-        self.eq_prefix_and = nn.ModuleList([VecAND() for _ in range(10)])
-        self.result_and = VecAND()
-        self.result_or = VecOR()
+        self.vec_xor = VecXOR(neuron_template=nt)
+        self.vec_not_xor = VecNOT(neuron_template=nt)
+        self.vec_not_b = VecNOT(neuron_template=nt)
+        self.vec_gt_and = VecAND(neuron_template=nt)
+        self.eq_tree = VecANDTree(neuron_template=nt)
+        self.eq_prefix_and = nn.ModuleList([VecAND(neuron_template=nt) for _ in range(10)])
+        self.result_and = VecAND(neuron_template=nt)
+        self.result_or = VecOR(neuron_template=nt)
         
     def forward(self, A, B):
         """A, B: [..., 11] (MSB first)"""
@@ -69,19 +70,20 @@ class Comparator11Bit(nn.Module):
 
 class Comparator53Bit(nn.Module):
     """53位比较器 (FP64尾数) - 向量化SNN实现"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 53
+        nt = neuron_template
         
         # 向量化门电路
-        self.vec_xor = VecXOR()
-        self.vec_not_xor = VecNOT()
-        self.vec_not_b = VecNOT()
-        self.vec_gt_and = VecAND()
-        self.eq_tree = VecANDTree()
-        self.eq_prefix_and = nn.ModuleList([VecAND() for _ in range(52)])
-        self.result_and = VecAND()
-        self.result_or = VecOR()
+        self.vec_xor = VecXOR(neuron_template=nt)
+        self.vec_not_xor = VecNOT(neuron_template=nt)
+        self.vec_not_b = VecNOT(neuron_template=nt)
+        self.vec_gt_and = VecAND(neuron_template=nt)
+        self.eq_tree = VecANDTree(neuron_template=nt)
+        self.eq_prefix_and = nn.ModuleList([VecAND(neuron_template=nt) for _ in range(52)])
+        self.result_and = VecAND(neuron_template=nt)
+        self.result_or = VecOR(neuron_template=nt)
         
     def forward(self, A, B):
         """A, B: [..., 53] (MSB first)"""
@@ -120,19 +122,20 @@ class Comparator53Bit(nn.Module):
 
 class Subtractor11Bit(nn.Module):
     """11位减法器 (FP64指数差) - 向量化SNN (LSB first)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 11
+        nt = neuron_template
         
         # 向量化门电路复用
-        self.vec_xor1 = VecXOR()
-        self.vec_xor2 = VecXOR()
-        self.vec_not_a = VecNOT()
-        self.vec_and1 = VecAND()
-        self.vec_and2 = VecAND()
-        self.vec_and3 = VecAND()
-        self.vec_or1 = VecOR()
-        self.vec_or2 = VecOR()
+        self.vec_xor1 = VecXOR(neuron_template=nt)
+        self.vec_xor2 = VecXOR(neuron_template=nt)
+        self.vec_not_a = VecNOT(neuron_template=nt)
+        self.vec_and1 = VecAND(neuron_template=nt)
+        self.vec_and2 = VecAND(neuron_template=nt)
+        self.vec_and3 = VecAND(neuron_template=nt)
+        self.vec_or1 = VecOR(neuron_template=nt)
+        self.vec_or2 = VecOR(neuron_template=nt)
         
     def forward(self, A, B, Bin=None):
         """A - B, LSB first"""
@@ -177,10 +180,10 @@ class Subtractor11Bit(nn.Module):
 
 class RippleCarryAdder57Bit(nn.Module):
     """57位加法器 (FP64内部精度) - 向量化SNN (LSB first)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 57
-        self.vec_adder = VecAdder(57)
+        self.vec_adder = VecAdder(57, neuron_template=neuron_template)
         
     def forward(self, A, B, Cin=None):
         """A + B, LSB first"""
@@ -194,19 +197,20 @@ class RippleCarryAdder57Bit(nn.Module):
 
 class Subtractor57Bit(nn.Module):
     """57位减法器 (FP64内部精度) - 向量化SNN (LSB first)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 57
+        nt = neuron_template
         
         # 向量化门电路复用
-        self.vec_xor1 = VecXOR()
-        self.vec_xor2 = VecXOR()
-        self.vec_not_a = VecNOT()
-        self.vec_and1 = VecAND()
-        self.vec_and2 = VecAND()
-        self.vec_and3 = VecAND()
-        self.vec_or1 = VecOR()
-        self.vec_or2 = VecOR()
+        self.vec_xor1 = VecXOR(neuron_template=nt)
+        self.vec_xor2 = VecXOR(neuron_template=nt)
+        self.vec_not_a = VecNOT(neuron_template=nt)
+        self.vec_and1 = VecAND(neuron_template=nt)
+        self.vec_and2 = VecAND(neuron_template=nt)
+        self.vec_and3 = VecAND(neuron_template=nt)
+        self.vec_or1 = VecOR(neuron_template=nt)
+        self.vec_or2 = VecOR(neuron_template=nt)
         
     def forward(self, A, B, Bin=None):
         """A - B, LSB first"""
@@ -254,13 +258,14 @@ class Subtractor57Bit(nn.Module):
 # ==============================================================================
 class BarrelShifterRight57(nn.Module):
     """57位桶形右移位器 - 向量化SNN实现"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 57
         self.shift_bits = 6  # 最多移63位
+        nt = neuron_template
         
         # 每层使用一个 VecMUX 处理所有位
-        self.vec_mux_layers = nn.ModuleList([VecMUX() for _ in range(self.shift_bits)])
+        self.vec_mux_layers = nn.ModuleList([VecMUX(neuron_template=nt) for _ in range(self.shift_bits)])
             
     def forward(self, X, shift):
         """X: [..., 57], shift: [..., 6] (MSB first)"""
@@ -296,16 +301,17 @@ class BarrelShifterRight57WithSticky(nn.Module):
     
     sticky = OR(所有被移出的位)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 57
         self.shift_bits = 6
+        nt = neuron_template
         
         # 向量化门电路
-        self.vec_mux_layers = nn.ModuleList([VecMUX() for _ in range(self.shift_bits)])
-        self.sticky_or_tree = VecORTree()
-        self.sticky_mux = nn.ModuleList([VecMUX() for _ in range(self.shift_bits)])
-        self.sticky_accum_or = VecOR()
+        self.vec_mux_layers = nn.ModuleList([VecMUX(neuron_template=nt) for _ in range(self.shift_bits)])
+        self.sticky_or_tree = VecORTree(neuron_template=nt)
+        self.sticky_mux = nn.ModuleList([VecMUX(neuron_template=nt) for _ in range(self.shift_bits)])
+        self.sticky_accum_or = VecOR(neuron_template=nt)
         
     def forward(self, X, shift):
         """X: [..., 57], shift: [..., 6] (MSB first)
@@ -355,13 +361,14 @@ class BarrelShifterRight57WithSticky(nn.Module):
 
 class BarrelShifterLeft57(nn.Module):
     """57位桶形左移位器 - 向量化SNN实现"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 57
         self.shift_bits = 6
+        nt = neuron_template
         
         # 向量化门电路
-        self.vec_mux_layers = nn.ModuleList([VecMUX() for _ in range(self.shift_bits)])
+        self.vec_mux_layers = nn.ModuleList([VecMUX(neuron_template=nt) for _ in range(self.shift_bits)])
             
     def forward(self, X, shift):
         """X: [..., 57], shift: [..., 6] (MSB first)"""
@@ -400,18 +407,19 @@ class LeadingZeroDetector57(nn.Module):
     
     使用向量化门电路复用
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         # 向量化门电路复用
-        self.vec_not_found = VecNOT()
-        self.vec_and_first = VecAND()
-        self.vec_or_found = VecOR()
-        self.vec_or_lzc = VecOR()
+        self.vec_not_found = VecNOT(neuron_template=nt)
+        self.vec_and_first = VecAND(neuron_template=nt)
+        self.vec_or_found = VecOR(neuron_template=nt)
+        self.vec_or_lzc = VecOR(neuron_template=nt)
         
         # 全零检测
-        self.or_tree = VecORTree()
-        self.vec_not_all_zero = VecNOT()
-        self.vec_or_final = VecOR()
+        self.or_tree = VecORTree(neuron_template=nt)
+        self.vec_not_all_zero = VecNOT(neuron_template=nt)
+        self.vec_or_final = VecOR(neuron_template=nt)
         
     def forward(self, X):
         """X: [..., 57] MSB first, returns: [..., 6] LZC MSB first"""
@@ -481,31 +489,32 @@ class FP32ToFP64Converter(nn.Module):
     转换规则 (Subnormal/Zero):
     - FP32 E=0 时保持 FP64 E=0
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 检测 FP32 E=0
-        self.e_or = nn.ModuleList([ORGate() for _ in range(7)])
-        self.e_is_zero_not = NOTGate()
+        self.e_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(7)])
+        self.e_is_zero_not = NOTGate(neuron_template=nt)
         
         # 检测 M≠0
-        self.m_or = nn.ModuleList([ORGate() for _ in range(22)])
+        self.m_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(22)])
         
         # 11位加法器: FP32_exp (8位扩展) + 896
-        self.exp_adder = RippleCarryAdder(bits=11)
+        self.exp_adder = RippleCarryAdder(bits=11, neuron_template=nt)
         
         # E=0时选择0指数
-        self.exp_mux = nn.ModuleList([MUXGate() for _ in range(11)])
+        self.exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(11)])
         
         # NaN/Inf检测
-        self.exp_all_one_and = nn.ModuleList([ANDGate() for _ in range(7)])
-        self.is_nan_and = ANDGate()
-        self.mant_zero_not = NOTGate()
-        self.is_inf_and = ANDGate()
+        self.exp_all_one_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(7)])
+        self.is_nan_and = ANDGate(neuron_template=nt)
+        self.mant_zero_not = NOTGate(neuron_template=nt)
+        self.is_inf_and = ANDGate(neuron_template=nt)
         
         # NaN/Inf输出选择
-        self.nan_mux = nn.ModuleList([MUXGate() for _ in range(64)])
-        self.inf_mux = nn.ModuleList([MUXGate() for _ in range(64)])
+        self.nan_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
+        self.inf_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
         
     def forward(self, fp32_pulse):
         """
@@ -621,42 +630,43 @@ class FP64ToFP32Converter(nn.Module):
     - exp: FP32_exp = FP64_exp - 896
     - mant: 截断 + RNE舍入 (52位 -> 23位)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 指数减法
-        self.exp_sub = Subtractor11Bit()
+        self.exp_sub = Subtractor11Bit(neuron_template=nt)
         
         # 溢出/下溢检测
-        self.overflow_cmp = Comparator11Bit()
-        self.underflow_cmp = Comparator11Bit()
+        self.overflow_cmp = Comparator11Bit(neuron_template=nt)
+        self.underflow_cmp = Comparator11Bit(neuron_template=nt)
         
         # NaN/Inf检测
-        self.nan_exp_and = nn.ModuleList([ANDGate() for _ in range(10)])
-        self.nan_mant_or = nn.ModuleList([ORGate() for _ in range(51)])
-        self.is_nan_and = ANDGate()
-        self.mant_zero_not = NOTGate()
-        self.is_inf_and = ANDGate()
+        self.nan_exp_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(10)])
+        self.nan_mant_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(51)])
+        self.is_nan_and = ANDGate(neuron_template=nt)
+        self.mant_zero_not = NOTGate(neuron_template=nt)
+        self.is_inf_and = ANDGate(neuron_template=nt)
         
         # RNE舍入
-        self.rne_or = ORGate()
-        self.rne_and = ANDGate()
-        self.sticky_or = nn.ModuleList([ORGate() for _ in range(28)])
+        self.rne_or = ORGate(neuron_template=nt)
+        self.rne_and = ANDGate(neuron_template=nt)
+        self.sticky_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(28)])
         
         # 尾数+1
-        self.mant_inc = RippleCarryAdder(bits=24)
-        self.not_carry = NOTGate()
-        self.mant_clear_and = nn.ModuleList([ANDGate() for _ in range(23)])
+        self.mant_inc = RippleCarryAdder(bits=24, neuron_template=nt)
+        self.not_carry = NOTGate(neuron_template=nt)
+        self.mant_clear_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(23)])
         
         # 指数+1
-        self.exp_inc = RippleCarryAdder(bits=8)
+        self.exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
         
         # 结果选择MUX
-        self.overflow_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.underflow_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.nan_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.inf_mux = nn.ModuleList([MUXGate() for _ in range(32)])
-        self.round_exp_mux = nn.ModuleList([MUXGate() for _ in range(8)])
+        self.overflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.underflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.nan_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.inf_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
+        self.round_exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8)])
         
     def forward(self, fp64_pulse):
         """

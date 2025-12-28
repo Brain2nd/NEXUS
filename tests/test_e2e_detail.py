@@ -1,5 +1,5 @@
 """
-详细调试：找出SNN与手动顺序累加不匹配的原因
+详细调试：找出SNN与手动顺序累加不匹配的原因（端到端浮点验证）
 """
 import torch
 import sys
@@ -10,14 +10,7 @@ from SNNTorch.atomic_ops import (
     SpikeFP8Multiplier,
     SpikeFP8Adder_Spatial,
 )
-
-
-def pulse_to_fp8_bytes(pulse):
-    bits = pulse.int()
-    byte_val = torch.zeros(pulse.shape[:-1], dtype=torch.int32, device=pulse.device)
-    for i in range(8):
-        byte_val = byte_val + (bits[..., i] << (7 - i))
-    return byte_val
+from SNNTorch.atomic_ops.pulse_decoder import PulseFloatingPointDecoder
 
 
 def float_to_fp8_tensor(x):
@@ -26,6 +19,15 @@ def float_to_fp8_tensor(x):
 
 def fp8_tensor_to_bytes(x_fp8):
     return x_fp8.view(torch.uint8).int()
+
+
+def pulse_to_fp8_bytes(pulse):
+    """脉冲转FP8字节值（仅用于调试比特比较）"""
+    bits = pulse.int()
+    byte_val = torch.zeros(pulse.shape[:-1], dtype=torch.int32, device=pulse.device)
+    for i in range(8):
+        byte_val = byte_val + (bits[..., i] << (7 - i))
+    return byte_val
 
 
 def debug_failing_case():

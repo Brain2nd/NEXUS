@@ -21,12 +21,16 @@ class SpikeFP32SiLU(nn.Module):
     
     输入: x [..., 32] FP32脉冲
     输出: SiLU(x) [..., 32] FP32脉冲
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
-        self.sigmoid = SpikeFP32Sigmoid()
-        self.mul = SpikeFP32Multiplier()
+        self.sigmoid = SpikeFP32Sigmoid(neuron_template=nt)
+        self.mul = SpikeFP32Multiplier(neuron_template=nt)
         
     def forward(self, x):
         """

@@ -39,12 +39,13 @@ class Subtractor25Bit(nn.Module):
     用于逐位除法: R最大24位，左移后25位
     A - B = A + (~B) + 1
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 25
-        self.not_gates = nn.ModuleList([NOTGate() for _ in range(25)])
-        self.adders = nn.ModuleList([FullAdder() for _ in range(25)])
-        self.borrow_not = NOTGate()
+        nt = neuron_template
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(25)])
+        self.adders = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(25)])
+        self.borrow_not = NOTGate(neuron_template=nt)
         
     def forward(self, A, B):
         """A - B, LSB first
@@ -80,11 +81,12 @@ class Subtractor25Bit(nn.Module):
 # ==============================================================================
 class Subtractor48Bit(nn.Module):
     """48位减法器 - 纯SNN (LSB first)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 48
-        self.not_gates = nn.ModuleList([NOTGate() for _ in range(48)])
-        self.adders = nn.ModuleList([FullAdder() for _ in range(48)])
+        nt = neuron_template
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(48)])
+        self.adders = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(48)])
         
     def forward(self, A, B):
         not_b = []
@@ -121,11 +123,12 @@ class DivisionIteration25(nn.Module):
     输入: R (余数, 25位 LSB first), D (除数, 25位 LSB first, 高位补0)
     输出: Q_bit (商位), R_next (新余数)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.sub = Subtractor25Bit()
-        self.not_borrow = NOTGate()
-        self.mux_r = nn.ModuleList([MUXGate() for _ in range(25)])
+        nt = neuron_template
+        self.sub = Subtractor25Bit(neuron_template=nt)
+        self.not_borrow = NOTGate(neuron_template=nt)
+        self.mux_r = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(25)])
         
     def forward(self, R, D):
         """
@@ -159,11 +162,12 @@ class DivisionIteration25(nn.Module):
 # ==============================================================================
 class DivisionIteration(nn.Module):
     """48位除法迭代 - 恢复余数算法"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.sub = Subtractor48Bit()
-        self.not_borrow = NOTGate()
-        self.mux_r = nn.ModuleList([MUXGate() for _ in range(48)])
+        nt = neuron_template
+        self.sub = Subtractor48Bit(neuron_template=nt)
+        self.not_borrow = NOTGate(neuron_template=nt)
+        self.mux_r = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(48)])
         
     def forward(self, R, D_extended):
         """
@@ -206,125 +210,129 @@ class SpikeFP32Divider(nn.Module):
     输出: [..., 32] FP32脉冲 (A / B)
     
     使用恢复余数除法，26次迭代获得24位商+2位舍入。
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # ===== 符号 =====
-        self.sign_xor = XORGate()
+        self.sign_xor = XORGate(neuron_template=nt)
         
         # ===== 指数运算 (10位防止溢出) =====
         # 指数减法: Ea - Eb (10位)
-        self.exp_sub = nn.ModuleList([FullAdder() for _ in range(10)])
-        self.exp_not = nn.ModuleList([NOTGate() for _ in range(10)])
+        self.exp_sub = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(10)])
+        self.exp_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(10)])
         # 加bias: + 127 (10位)
-        self.exp_add_bias = RippleCarryAdder(bits=10)
+        self.exp_add_bias = RippleCarryAdder(bits=10, neuron_template=nt)
         # 指数调整 (归一化时减1) (10位)
-        self.exp_adjust = RippleCarryAdder(bits=10)
-        self.exp_adjust_not = nn.ModuleList([NOTGate() for _ in range(10)])
+        self.exp_adjust = RippleCarryAdder(bits=10, neuron_template=nt)
+        self.exp_adjust_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(10)])
         
         # ===== 溢出/下溢检测 =====
         # 溢出: 10位有符号 >= 255
-        self.overflow_check_and = nn.ModuleList([ANDGate() for _ in range(8)])
-        self.overflow_or = ORGate()
-        self.overflow_and = ANDGate()
-        self.overflow_not = NOTGate()
+        self.overflow_check_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(8)])
+        self.overflow_or = ORGate(neuron_template=nt)
+        self.overflow_and = ANDGate(neuron_template=nt)
+        self.overflow_not = NOTGate(neuron_template=nt)
         # 下溢: 10位有符号 <= 0
-        self.underflow_not = nn.ModuleList([NOTGate() for _ in range(10)])
-        self.underflow_and = nn.ModuleList([ANDGate() for _ in range(9)])
-        self.underflow_or = ORGate()
+        self.underflow_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(10)])
+        self.underflow_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(9)])
+        self.underflow_or = ORGate(neuron_template=nt)
         # 溢出/下溢结果MUX
-        self.overflow_mux_e = nn.ModuleList([MUXGate() for _ in range(8)])
-        self.overflow_mux_m = nn.ModuleList([MUXGate() for _ in range(23)])
-        self.underflow_mux_e = nn.ModuleList([MUXGate() for _ in range(8)])
-        self.underflow_mux_m = nn.ModuleList([MUXGate() for _ in range(23)])
+        self.overflow_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8)])
+        self.overflow_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(23)])
+        self.underflow_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8)])
+        self.underflow_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(23)])
         
         # ===== Subnormal输出处理 =====
         # 需要对尾数进行额外右移
         from .fp32_mul import BarrelShifterRight48
-        self.subnormal_shifter = BarrelShifterRight48()
-        self.shift_add_one = RippleCarryAdder(bits=10)
-        self.subnorm_sticky_or = nn.ModuleList([ORGate() for _ in range(24)])
-        self.subnorm_rne_or = ORGate()
-        self.subnorm_rne_and = ANDGate()
-        self.subnorm_round_adder = RippleCarryAdder(bits=24)
-        self.subnorm_mux_m = nn.ModuleList([MUXGate() for _ in range(23)])
-        self.is_subnormal_and = ANDGate()
-        self.not_very_underflow = NOTGate()
+        self.subnormal_shifter = BarrelShifterRight48(neuron_template=nt)
+        self.shift_add_one = RippleCarryAdder(bits=10, neuron_template=nt)
+        self.subnorm_sticky_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(24)])
+        self.subnorm_rne_or = ORGate(neuron_template=nt)
+        self.subnorm_rne_and = ANDGate(neuron_template=nt)
+        self.subnorm_round_adder = RippleCarryAdder(bits=24, neuron_template=nt)
+        self.subnorm_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(23)])
+        self.is_subnormal_and = ANDGate(neuron_template=nt)
+        self.not_very_underflow = NOTGate(neuron_template=nt)
         
         # ===== 归一化 =====
         # 当Q0=0时需要归一化: 尾数左移1位, 指数-1
-        self.normalize_mux = nn.ModuleList([MUXGate() for _ in range(23)])  # 尾数选择
-        self.normalize_exp_mux = nn.ModuleList([MUXGate() for _ in range(8)])  # 指数选择
-        self.q0_not = NOTGate()  # Q0=0检测
+        self.normalize_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(23)])  # 尾数选择
+        self.normalize_exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8)])  # 指数选择
+        self.q0_not = NOTGate(neuron_template=nt)  # Q0=0检测
         
         # ===== 特殊值检测 =====
         # 指数全1检测 (Inf/NaN)
-        self.exp_all_one_and_a = nn.ModuleList([ANDGate() for _ in range(7)])
-        self.exp_all_one_and_b = nn.ModuleList([ANDGate() for _ in range(7)])
+        self.exp_all_one_and_a = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(7)])
+        self.exp_all_one_and_b = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(7)])
         
         # 指数全0检测 (Zero/Subnormal)
-        self.exp_zero_or_a = nn.ModuleList([ORGate() for _ in range(7)])
-        self.exp_zero_or_b = nn.ModuleList([ORGate() for _ in range(7)])
-        self.exp_zero_not_a = NOTGate()
-        self.exp_zero_not_b = NOTGate()
+        self.exp_zero_or_a = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(7)])
+        self.exp_zero_or_b = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(7)])
+        self.exp_zero_not_a = NOTGate(neuron_template=nt)
+        self.exp_zero_not_b = NOTGate(neuron_template=nt)
         
         # 尾数全0检测
-        self.mant_zero_or_a = nn.ModuleList([ORGate() for _ in range(22)])
-        self.mant_zero_or_b = nn.ModuleList([ORGate() for _ in range(22)])
-        self.mant_zero_not_a = NOTGate()
-        self.mant_zero_not_b = NOTGate()
+        self.mant_zero_or_a = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(22)])
+        self.mant_zero_or_b = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(22)])
+        self.mant_zero_not_a = NOTGate(neuron_template=nt)
+        self.mant_zero_not_b = NOTGate(neuron_template=nt)
         
         # 零检测: E=0 AND M=0
-        self.a_is_zero_and = ANDGate()
-        self.b_is_zero_and = ANDGate()
+        self.a_is_zero_and = ANDGate(neuron_template=nt)
+        self.b_is_zero_and = ANDGate(neuron_template=nt)
         
         # Inf检测: E=FF AND M=0
-        self.a_is_inf_and = ANDGate()
-        self.b_is_inf_and = ANDGate()
+        self.a_is_inf_and = ANDGate(neuron_template=nt)
+        self.b_is_inf_and = ANDGate(neuron_template=nt)
         
         # NaN检测: E=FF AND M!=0
-        self.a_mant_nonzero_not = NOTGate()
-        self.b_mant_nonzero_not = NOTGate()
-        self.a_is_nan_and = ANDGate()
-        self.b_is_nan_and = ANDGate()
-        self.either_nan_or = ORGate()
+        self.a_mant_nonzero_not = NOTGate(neuron_template=nt)
+        self.b_mant_nonzero_not = NOTGate(neuron_template=nt)
+        self.a_is_nan_and = ANDGate(neuron_template=nt)
+        self.b_is_nan_and = ANDGate(neuron_template=nt)
+        self.either_nan_or = ORGate(neuron_template=nt)
         
         # x/0 = Inf, 0/0 = NaN
-        self.div_by_zero_and = ANDGate()  # a_not_zero AND b_is_zero
-        self.zero_div_zero_and = ANDGate()  # a_is_zero AND b_is_zero
+        self.div_by_zero_and = ANDGate(neuron_template=nt)  # a_not_zero AND b_is_zero
+        self.zero_div_zero_and = ANDGate(neuron_template=nt)  # a_is_zero AND b_is_zero
         
         # 结果特殊值组合
-        self.result_is_nan_or = ORGate()
-        self.result_is_inf_or = ORGate()
-        self.result_is_zero_or = ORGate()
+        self.result_is_nan_or = ORGate(neuron_template=nt)
+        self.result_is_inf_or = ORGate(neuron_template=nt)
+        self.result_is_zero_or = ORGate(neuron_template=nt)
         
         # ===== SNN原生逐位除法 (49次迭代) =====
         # 使用25位迭代单元，符合IF神经元动力学
-        self.div_iterations = nn.ModuleList([DivisionIteration25() for _ in range(49)])
+        self.div_iterations = nn.ModuleList([DivisionIteration25(neuron_template=nt) for _ in range(49)])
         
         # ===== 比较器 (mant_a >= mant_b) =====
-        self.mant_cmp_sub = Subtractor25Bit()  # 24位比较用25位减法器
+        self.mant_cmp_sub = Subtractor25Bit(neuron_template=nt)  # 24位比较用25位减法器
         
         # ===== Sticky OR树 (检测25位余数是否非零) - 向量化 =====
-        self.vec_or_tree = VecORTree()
+        self.vec_or_tree = VecORTree(neuron_template=nt)
         
         # ===== RNE舍入 =====
-        self.rne_or = ORGate()
-        self.rne_and = ANDGate()
-        self.round_adder = RippleCarryAdder(bits=24)
+        self.rne_or = ORGate(neuron_template=nt)
+        self.rne_and = ANDGate(neuron_template=nt)
+        self.round_adder = RippleCarryAdder(bits=24, neuron_template=nt)
         
         # ===== 输出选择 - 向量化 =====
-        self.vec_mux = VecMUX()
+        self.vec_mux = VecMUX(neuron_template=nt)
         
         # 纯SNN NOT门
-        self.not_a_is_zero = NOTGate()
-        self.not_b_is_inf = NOTGate()
-        self.not_result_is_nan = NOTGate()
-        self.not_result_is_inf = NOTGate()
-        self.inf_and_not_nan = ANDGate()
-        self.zero_and_not_nan = ANDGate()
-        self.zero_and_not_inf = ANDGate()
+        self.not_a_is_zero = NOTGate(neuron_template=nt)
+        self.not_b_is_inf = NOTGate(neuron_template=nt)
+        self.not_result_is_nan = NOTGate(neuron_template=nt)
+        self.not_result_is_inf = NOTGate(neuron_template=nt)
+        self.inf_and_not_nan = ANDGate(neuron_template=nt)
+        self.zero_and_not_nan = ANDGate(neuron_template=nt)
+        self.zero_and_not_inf = ANDGate(neuron_template=nt)
         
     def forward(self, A, B):
         """

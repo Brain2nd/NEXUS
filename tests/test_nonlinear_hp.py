@@ -1,5 +1,5 @@
 """
-高精度非线性组件测试 - 验证全链路FP64版本的bit-exactness
+高精度非线性组件测试 - 验证全链路FP64版本的bit-exactness（端到端浮点验证）
 """
 import sys
 import os
@@ -11,6 +11,7 @@ import struct
 
 from atomic_ops import (SpikeFP32SigmoidFullFP64, SpikeFP32SiLUFullFP64,
                         SpikeFP32SoftmaxFullFP64)
+from atomic_ops.pulse_decoder import PulseFP32Decoder
 
 
 def float32_to_bits(f):
@@ -35,18 +36,6 @@ def float_to_pulse_batch(vals, device):
     return torch.from_numpy(pulses.reshape(original_shape + (32,))).to(device)
 
 
-def pulse_to_bits_batch(pulse):
-    flat_pulse = pulse.reshape(-1, 32).cpu().numpy() > 0.5
-    n = flat_pulse.shape[0]
-    
-    bits = np.zeros(n, dtype=np.uint32)
-    for i in range(32):
-        shift = np.uint32(31 - i)
-        bits |= (flat_pulse[:, i].astype(np.uint32) << shift)
-    
-    return bits.reshape(pulse.shape[:-1])
-
-
 def compute_ulp_error(result_bits, expected_bits, result_float, expected_float):
     is_nan_result = np.isnan(result_float)
     is_nan_expected = np.isnan(expected_float)
@@ -63,7 +52,7 @@ def compute_ulp_error(result_bits, expected_bits, result_float, expected_float):
 
 
 # ==============================================================================
-# 测试函数
+# 测试函数（端到端浮点验证）
 # ==============================================================================
 def test_sigmoid_hp(device='cuda', num_samples=100):
     print(f"\n{'='*60}")
@@ -71,6 +60,7 @@ def test_sigmoid_hp(device='cuda', num_samples=100):
     print(f"{'='*60}")
     
     sigmoid_mod = SpikeFP32SigmoidFullFP64().to(device).eval()
+    decoder = PulseFP32Decoder().to(device)
     
     np.random.seed(42)
     test_vals = np.random.uniform(-5, 5, num_samples).astype(np.float32)
@@ -87,8 +77,9 @@ def test_sigmoid_hp(device='cuda', num_samples=100):
     with torch.no_grad():
         result_pulse = sigmoid_mod(x_pulse)
     
-    result_bits = pulse_to_bits_batch(result_pulse)
-    result_float = result_bits.view(np.float32)
+    decoder.reset()
+    result_float = decoder(result_pulse).cpu().numpy()
+    result_bits = result_float.view(np.uint32)
     
     ulp_errors = compute_ulp_error(result_bits, expected_bits, result_float, expected)
     
@@ -117,6 +108,7 @@ def test_silu_hp(device='cuda', num_samples=100):
     print(f"{'='*60}")
     
     silu_mod = SpikeFP32SiLUFullFP64().to(device).eval()
+    decoder = PulseFP32Decoder().to(device)
     
     np.random.seed(123)
     test_vals = np.random.uniform(-5, 5, num_samples).astype(np.float32)
@@ -133,8 +125,9 @@ def test_silu_hp(device='cuda', num_samples=100):
     with torch.no_grad():
         result_pulse = silu_mod(x_pulse)
     
-    result_bits = pulse_to_bits_batch(result_pulse)
-    result_float = result_bits.view(np.float32)
+    decoder.reset()
+    result_float = decoder(result_pulse).cpu().numpy()
+    result_bits = result_float.view(np.uint32)
     
     ulp_errors = compute_ulp_error(result_bits, expected_bits, result_float, expected)
     
@@ -157,6 +150,7 @@ def test_softmax_hp(device='cuda', num_samples=50, seq_len=4):
     print(f"{'='*60}")
     
     softmax_mod = SpikeFP32SoftmaxFullFP64().to(device).eval()
+    decoder = PulseFP32Decoder().to(device)
     
     np.random.seed(456)
     # [num_samples, seq_len] 输入
@@ -174,8 +168,9 @@ def test_softmax_hp(device='cuda', num_samples=50, seq_len=4):
     with torch.no_grad():
         result_pulse = softmax_mod(x_pulse)
     
-    result_bits = pulse_to_bits_batch(result_pulse)
-    result_float = result_bits.view(np.float32)
+    decoder.reset()
+    result_float = decoder(result_pulse).cpu().numpy()
+    result_bits = result_float.view(np.uint32)
     
     ulp_errors = compute_ulp_error(result_bits.flatten(), expected_bits.flatten(), 
                                     result_float.flatten(), expected.flatten())

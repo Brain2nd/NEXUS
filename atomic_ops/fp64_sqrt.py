@@ -48,15 +48,16 @@ class SpikeFP64SqrtGuess(nn.Module):
     - 如果 E 是偶数: y_0 ≈ 2^(E/2) * 1.0
     - 如果 E 是奇数: y_0 ≈ 2^((E-1)/2) * sqrt(2)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 向量化门电路
-        self.vec_not = VecNOT()
-        self.vec_xor = VecXOR()
-        self.vec_and = VecAND()
-        self.vec_or = VecOR()
-        self.vec_mux = VecMUX()
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_xor = VecXOR(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_or = VecOR(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
         
         # 指数加法器
         self.exp_adder = VecAdder(11)

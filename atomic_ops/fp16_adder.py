@@ -21,34 +21,34 @@ from .fp16_components import ComparatorNBit, SubtractorNBit, BarrelShifterRightN
 # ==============================================================================
 class Comparator5Bit(ComparatorNBit):
     """5位比较器（FP16指数）"""
-    def __init__(self):
-        super().__init__(bits=5)
+    def __init__(self, neuron_template=None):
+        super().__init__(bits=5, neuron_template=neuron_template)
 
 
 class Comparator11Bit(ComparatorNBit):
     """11位比较器（FP16尾数: hidden + 10 mant）"""
-    def __init__(self):
-        super().__init__(bits=11)
+    def __init__(self, neuron_template=None):
+        super().__init__(bits=11, neuron_template=neuron_template)
 
 
 class Subtractor5Bit(SubtractorNBit):
     """5位减法器（FP16指数差）"""
-    def __init__(self):
-        super().__init__(bits=5)
+    def __init__(self, neuron_template=None):
+        super().__init__(bits=5, neuron_template=neuron_template)
 
 
 class BarrelShifterRight16(BarrelShifterRightNBit):
     """16位桶形右移位器"""
-    def __init__(self):
-        super().__init__(data_bits=16, shift_bits=5)
+    def __init__(self, neuron_template=None):
+        super().__init__(data_bits=16, shift_bits=5, neuron_template=neuron_template)
 
 
 class BarrelShifterLeft16(nn.Module):
     """16位桶形左移位器（归一化）- 向量化"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         # 向量化 MUX (单实例复用)
-        self.vec_mux = VecMUX()
+        self.vec_mux = VecMUX(neuron_template=neuron_template)
             
     def forward(self, X, shift):
         """X: [..., 16], shift: [..., 4] (MSB first, 只用低4位)"""
@@ -75,14 +75,15 @@ class BarrelShifterLeft16(nn.Module):
 
 class LeadingZeroDetector16(nn.Module):
     """16位前导零检测器 - 输出4位LZC (向量化SNN)"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         # 向量化门电路 (复用单实例)
-        self.vec_not = VecNOT()
-        self.vec_and = VecAND()
-        self.vec_or = VecOR()
-        self.vec_mux = VecMUX()
-        self.vec_or_tree = VecORTree()
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_or = VecOR(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_or_tree = VecORTree(neuron_template=nt)
         
     def forward(self, X):
         """X: [..., 16], returns: [..., 4] (LZC, MSB first)"""
@@ -131,9 +132,9 @@ class LeadingZeroDetector16(nn.Module):
 
 class RippleCarryAdder16(nn.Module):
     """16位加法器 - 向量化"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.vec_adder = VecAdder(16)
+        self.vec_adder = VecAdder(16, neuron_template=neuron_template)
         
     def forward(self, A, B, Cin=None):
         """A, B: [..., 16] LSB first"""
@@ -145,8 +146,8 @@ class RippleCarryAdder16(nn.Module):
 
 class Subtractor16Bit(SubtractorNBit):
     """16位减法器"""
-    def __init__(self):
-        super().__init__(bits=16)
+    def __init__(self, neuron_template=None):
+        super().__init__(bits=16, neuron_template=neuron_template)
 
 
 # ==============================================================================
@@ -157,97 +158,101 @@ class SpikeFP16Adder(nn.Module):
     
     FP16 格式: [S | E4..E0 | M9..M0], bias=15
     内部使用 16 位尾数精度
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # ===== 指数比较 =====
-        self.exp_cmp = Comparator5Bit()
-        self.mantissa_cmp = Comparator11Bit()  # hidden + 10 mant
+        self.exp_cmp = Comparator5Bit(neuron_template=nt)
+        self.mantissa_cmp = Comparator11Bit(neuron_template=nt)  # hidden + 10 mant
         
         # ===== 指数差 =====
-        self.exp_sub_ab = Subtractor5Bit()
-        self.exp_sub_ba = Subtractor5Bit()
-        self.exp_diff_mux = nn.ModuleList([MUXGate() for _ in range(5)])
+        self.exp_sub_ab = Subtractor5Bit(neuron_template=nt)
+        self.exp_sub_ba = Subtractor5Bit(neuron_template=nt)
+        self.exp_diff_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
         
         # ===== 绝对值比较 =====
-        self.abs_eq_and = ANDGate()
-        self.mant_ge_or = ORGate()
-        self.abs_ge_and = ANDGate()
-        self.abs_ge_or = ORGate()
+        self.abs_eq_and = ANDGate(neuron_template=nt)
+        self.mant_ge_or = ORGate(neuron_template=nt)
+        self.abs_ge_and = ANDGate(neuron_template=nt)
+        self.abs_ge_or = ORGate(neuron_template=nt)
         
         # ===== E=0 检测 =====
-        self.e_zero_or = nn.ModuleList([ORGate() for _ in range(8)])
-        self.e_zero_not = nn.ModuleList([NOTGate() for _ in range(2)])
-        self.subnorm_exp_mux_a = nn.ModuleList([MUXGate() for _ in range(5)])
-        self.subnorm_exp_mux_b = nn.ModuleList([MUXGate() for _ in range(5)])
+        self.e_zero_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(8)])
+        self.e_zero_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(2)])
+        self.subnorm_exp_mux_a = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        self.subnorm_exp_mux_b = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
         
         # ===== 对齐移位器 =====
-        self.align_shifter = BarrelShifterRight16()
+        self.align_shifter = BarrelShifterRight16(neuron_template=nt)
         
         # ===== 尾数运算 =====
-        self.mantissa_adder = RippleCarryAdder16()
-        self.mantissa_sub = Subtractor16Bit()
+        self.mantissa_adder = RippleCarryAdder16(neuron_template=nt)
+        self.mantissa_sub = Subtractor16Bit(neuron_template=nt)
         
         # ===== 符号处理 =====
-        self.sign_xor = XORGate()
-        self.exact_cancel_and = ANDGate()
+        self.sign_xor = XORGate(neuron_template=nt)
+        self.exact_cancel_and = ANDGate(neuron_template=nt)
         
         # ===== 交换逻辑 =====
-        self.swap_mux_s = MUXGate()
-        self.swap_mux_e = nn.ModuleList([MUXGate() for _ in range(5)])
-        self.swap_mux_m = nn.ModuleList([MUXGate() for _ in range(32)])  # 2 * 16
+        self.swap_mux_s = MUXGate(neuron_template=nt)
+        self.swap_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        self.swap_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])  # 2 * 16
         
         # ===== 结果选择 (Step 5: sum vs diff) =====
-        self.result_mux = nn.ModuleList([MUXGate() for _ in range(17)])  # 16 + carry
+        self.result_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(17)])  # 16 + carry
         
         # ===== 尾数路径选择 (Step 7: overflow vs normal) =====
-        self.mant_path_mux = nn.ModuleList([MUXGate() for _ in range(12)])  # 10 mant + round + sticky
+        self.mant_path_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(12)])  # 10 mant + round + sticky
         
         # ===== 归一化 =====
-        self.lzd = LeadingZeroDetector16()
-        self.norm_shifter = BarrelShifterLeft16()
-        self.exp_adj_sub = Subtractor5Bit()
+        self.lzd = LeadingZeroDetector16(neuron_template=nt)
+        self.norm_shifter = BarrelShifterLeft16(neuron_template=nt)
+        self.exp_adj_sub = Subtractor5Bit(neuron_template=nt)
         
         # ===== 溢出处理 =====
-        self.exp_overflow_mux = nn.ModuleList([MUXGate() for _ in range(5)])
-        self.post_round_exp_inc = RippleCarryAdder(bits=5)
+        self.exp_overflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        self.post_round_exp_inc = RippleCarryAdder(bits=5, neuron_template=nt)
         
         # ===== 下溢处理 =====
-        self.underflow_cmp = Comparator5Bit()
-        self.underflow_or = ORGate()
-        self.underflow_not = NOTGate()  # NOT(is_underflow) 用于舍入控制
-        self.and_do_round = ANDGate()  # do_round AND not_underflow (纯SNN)
-        self.underflow_mux_e = nn.ModuleList([MUXGate() for _ in range(5)])
-        self.underflow_mux_m = nn.ModuleList([MUXGate() for _ in range(10)])
+        self.underflow_cmp = Comparator5Bit(neuron_template=nt)
+        self.underflow_or = ORGate(neuron_template=nt)
+        self.underflow_not = NOTGate(neuron_template=nt)  # NOT(is_underflow) 用于舍入控制
+        self.and_do_round = ANDGate(neuron_template=nt)  # do_round AND not_underflow (纯SNN)
+        self.underflow_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        self.underflow_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(10)])
         
         # ===== 舍入 =====
-        self.round_or = ORGate()
-        self.round_and = ANDGate()
-        self.round_adder = RippleCarryAdder(bits=11)  # hidden + 10 mant
+        self.round_or = ORGate(neuron_template=nt)
+        self.round_and = ANDGate(neuron_template=nt)
+        self.round_adder = RippleCarryAdder(bits=11, neuron_template=nt)  # hidden + 10 mant
         
         # ===== 最终选择 =====
-        self.cancel_mux_s = MUXGate()
-        self.cancel_mux_e = nn.ModuleList([MUXGate() for _ in range(5)])
-        self.cancel_mux_m = nn.ModuleList([MUXGate() for _ in range(10)])
+        self.cancel_mux_s = MUXGate(neuron_template=nt)
+        self.cancel_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        self.cancel_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(10)])
         
         # ===== 溢出到NaN =====
-        self.exp_overflow_and = ANDGate()
-        self.nan_mux_s = MUXGate()
-        self.nan_mux_e = nn.ModuleList([MUXGate() for _ in range(5)])
-        self.nan_mux_m = nn.ModuleList([MUXGate() for _ in range(10)])
+        self.exp_overflow_and = ANDGate(neuron_template=nt)
+        self.nan_mux_s = MUXGate(neuron_template=nt)
+        self.nan_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        self.nan_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(10)])
         
         # ===== 舍入溢出处理 =====
-        self.not_round_carry = NOTGate()
-        self.mant_clear_and = nn.ModuleList([ANDGate() for _ in range(10)])
-        self.round_exp_inc = RippleCarryAdder(bits=5)
-        self.round_exp_mux = nn.ModuleList([MUXGate() for _ in range(5)])
+        self.not_round_carry = NOTGate(neuron_template=nt)
+        self.mant_clear_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(10)])
+        self.round_exp_inc = RippleCarryAdder(bits=5, neuron_template=nt)
+        self.round_exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
         
         # ===== Sticky bit 计算（纯SNN OR门链）=====
         # sticky_overflow: OR(bits 11-15) = 5 bits
-        self.sticky_overflow_or = nn.ModuleList([ORGate() for _ in range(4)])  # 4个OR门组成链
+        self.sticky_overflow_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(4)])  # 4个OR门组成链
         # sticky_norm: OR(bits 12-15) = 4 bits
-        self.sticky_norm_or = nn.ModuleList([ORGate() for _ in range(3)])  # 3个OR门组成链
+        self.sticky_norm_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(3)])  # 3个OR门组成链
         
     def forward(self, A, B):
         """

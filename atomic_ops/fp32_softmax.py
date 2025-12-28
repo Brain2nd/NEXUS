@@ -22,13 +22,17 @@ class SpikeFP32Softmax(nn.Module):
     
     输入: x [..., N, 32] FP32脉冲，其中N是softmax维度
     输出: Softmax(x) [..., N, 32] FP32脉冲
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
-        self.exp = SpikeFP32Exp()
-        self.adder = SpikeFP32Adder()
-        self.divider = SpikeFP32Divider()
+        self.exp = SpikeFP32Exp(neuron_template=nt)
+        self.adder = SpikeFP32Adder(neuron_template=nt)
+        self.divider = SpikeFP32Divider(neuron_template=nt)
         
     def forward(self, x):
         """

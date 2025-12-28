@@ -30,53 +30,57 @@ class SpikeFP32Adder(nn.Module):
     
     FP32 格式: [S | E7..E0 | M22..M0], bias=127
     内部使用 28 位尾数精度 (hidden + 23 mant + 4 guard)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # ===== 向量化基础门电路 =====
-        self.vec_and = VecAND()
-        self.vec_or = VecOR()
-        self.vec_xor = VecXOR()
-        self.vec_not = VecNOT()
-        self.vec_mux = VecMUX()
-        self.vec_or_tree = VecORTree()
-        self.vec_and_tree = VecANDTree()
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_or = VecOR(neuron_template=nt)
+        self.vec_xor = VecXOR(neuron_template=nt)
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_or_tree = VecORTree(neuron_template=nt)
+        self.vec_and_tree = VecANDTree(neuron_template=nt)
         
         # ===== 比较器 =====
-        self.exp_cmp = Comparator8Bit()
-        self.mantissa_cmp = Comparator24Bit()
+        self.exp_cmp = Comparator8Bit(neuron_template=nt)
+        self.mantissa_cmp = Comparator24Bit(neuron_template=nt)
         
         # ===== 指数差 =====
-        self.exp_sub_ab = Subtractor8Bit()
-        self.exp_sub_ba = Subtractor8Bit()
+        self.exp_sub_ab = Subtractor8Bit(neuron_template=nt)
+        self.exp_sub_ba = Subtractor8Bit(neuron_template=nt)
         
         # ===== 绝对值比较门 =====
-        self.abs_eq_and = VecAND()
-        self.mant_ge_or = VecOR()
-        self.abs_ge_and = VecAND()
-        self.abs_ge_or = VecOR()
+        self.abs_eq_and = VecAND(neuron_template=nt)
+        self.mant_ge_or = VecOR(neuron_template=nt)
+        self.abs_ge_and = VecAND(neuron_template=nt)
+        self.abs_ge_or = VecOR(neuron_template=nt)
         
         # ===== 对齐移位器 =====
-        self.align_shifter = BarrelShifterRight28WithSticky()
+        self.align_shifter = BarrelShifterRight28WithSticky(neuron_template=nt)
         
         # ===== 尾数运算 =====
-        self.mantissa_adder = RippleCarryAdder28Bit()
-        self.mantissa_sub = Subtractor28Bit()
-        self.sub_one = Subtractor28Bit()
+        self.mantissa_adder = RippleCarryAdder28Bit(neuron_template=nt)
+        self.mantissa_sub = Subtractor28Bit(neuron_template=nt)
+        self.sub_one = Subtractor28Bit(neuron_template=nt)
         
         # ===== 归一化 =====
-        self.lzd = LeadingZeroDetector28()
-        self.norm_shifter = BarrelShifterLeft28()
-        self.exp_adj_sub = Subtractor8Bit()
+        self.lzd = LeadingZeroDetector28(neuron_template=nt)
+        self.norm_shifter = BarrelShifterLeft28(neuron_template=nt)
+        self.exp_adj_sub = Subtractor8Bit(neuron_template=nt)
         
         # ===== 溢出/下溢处理 =====
-        self.underflow_cmp = Comparator8Bit()
-        self.post_round_exp_inc = RippleCarryAdder(bits=8)
-        self.round_exp_inc = RippleCarryAdder(bits=8)
+        self.underflow_cmp = Comparator8Bit(neuron_template=nt)
+        self.post_round_exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.round_exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
         
         # ===== 舍入 =====
-        self.round_adder = RippleCarryAdder(bits=24)
+        self.round_adder = RippleCarryAdder(bits=24, neuron_template=nt)
         
     def forward(self, A, B):
         """

@@ -2,7 +2,8 @@
 向量化SNN逻辑门电路库 (Vectorized SNN Logic Gates Library)
 ==============================================================
 
-所有门电路使用单个IFNode实例处理任意形状的张量输入，实现真正的向量化。
+所有门电路使用单个神经元实例处理任意形状的张量输入，实现真正的向量化。
+支持统一的神经元模板机制，可在 IF/LIF 之间切换用于物理仿真。
 
 核心原则：
 1. 批次向量化：所有batch样本同时处理
@@ -15,11 +16,28 @@
 - VecFullAdder, VecHalfAdder: 向量化加法器单元
 - VecAdder, VecSubtractor: 向量化多位加减法器
 
+使用示例:
+```python
+from SNNTorch.atomic_ops.vec_logic_gates import VecAdder
+from SNNTorch.atomic_ops.logic_gates import SimpleLIFNode
+
+# 默认 IF 神经元 (理想数字逻辑)
+adder = VecAdder(bits=8)
+
+# LIF 神经元 (物理仿真)
+lif_template = SimpleLIFNode(beta=0.9)
+adder_lif = VecAdder(bits=8, neuron_template=lif_template)
+```
+
 作者: HumanBrain Project
 """
 import torch
 import torch.nn as nn
+from copy import deepcopy
 from spikingjelly.activation_based import neuron, surrogate
+
+# 从 logic_gates 导入 SimpleLIFNode 和辅助函数
+from .logic_gates import SimpleLIFNode, _create_neuron
 
 
 # ==============================================================================
@@ -27,14 +45,16 @@ from spikingjelly.activation_based import neuron, surrogate
 # ==============================================================================
 
 class VecAND(nn.Module):
-    """向量化AND门 - 一个IFNode处理任意形状输入
+    """向量化AND门 - 一个神经元处理任意形状输入
     
     数学原理: 阈值1.5，只有当两个输入都为1时 (V=2>1.5) 才发放
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=1.5, v_reset=0.0, 
-                                   surrogate_function=surrogate.ATan())
+        self.node = _create_neuron(neuron_template, threshold=1.5)
     
     def forward(self, a, b):
         self.node.reset()
@@ -45,14 +65,16 @@ class VecAND(nn.Module):
 
 
 class VecOR(nn.Module):
-    """向量化OR门 - 一个IFNode处理任意形状输入
+    """向量化OR门 - 一个神经元处理任意形状输入
     
     数学原理: 阈值0.5，任一输入为1时 (V>=1>0.5) 就发放
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=0.5, v_reset=0.0,
-                                   surrogate_function=surrogate.ATan())
+        self.node = _create_neuron(neuron_template, threshold=0.5)
     
     def forward(self, a, b):
         self.node.reset()
@@ -63,15 +85,17 @@ class VecOR(nn.Module):
 
 
 class VecNOT(nn.Module):
-    """向量化NOT门 - 一个IFNode处理任意形状输入
+    """向量化NOT门 - 一个神经元处理任意形状输入
     
     数学原理: 偏置1.0 + 抑制性权重-1.0，输入0时V=1>0.5发放，输入1时V=0不发放
     注意: 1.0-x 是突触电流计算，不是逻辑运算
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.node = neuron.IFNode(v_threshold=0.5, v_reset=0.0,
-                                   surrogate_function=surrogate.ATan())
+        self.node = _create_neuron(neuron_template, threshold=0.5)
     
     def forward(self, x):
         self.node.reset()
@@ -82,16 +106,17 @@ class VecNOT(nn.Module):
 
 
 class VecXOR(nn.Module):
-    """向量化XOR门 - 两层IFNode
+    """向量化XOR门 - 两层神经元
     
     数学原理: XOR = (A + B) - 2*AND(A,B)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.hidden = neuron.IFNode(v_threshold=1.5, v_reset=0.0,
-                                     surrogate_function=surrogate.ATan())
-        self.output = neuron.IFNode(v_threshold=0.5, v_reset=0.0,
-                                     surrogate_function=surrogate.ATan())
+        self.hidden = _create_neuron(neuron_template, threshold=1.5)
+        self.output = _create_neuron(neuron_template, threshold=0.5)
     
     def forward(self, a, b):
         self.hidden.reset()
@@ -108,13 +133,16 @@ class VecMUX(nn.Module):
     """向量化MUX门 - sel=1选a, sel=0选b
     
     MUX(s, a, b) = (s AND a) OR (NOT(s) AND b)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.not_s = VecNOT()
-        self.and1 = VecAND()  # s AND a
-        self.and2 = VecAND()  # NOT(s) AND b
-        self.or_gate = VecOR()
+        self.not_s = VecNOT(neuron_template)
+        self.and1 = VecAND(neuron_template)  # s AND a
+        self.and2 = VecAND(neuron_template)  # NOT(s) AND b
+        self.or_gate = VecOR(neuron_template)
     
     def forward(self, sel, a, b):
         ns = self.not_s(sel)
@@ -137,10 +165,14 @@ class VecORTree(nn.Module):
     """并行OR树 - 检测任意位是否为1
     
     使用log2(n)层OR门并行归约，最多支持1024位输入
+    
+    Args:
+        max_layers: 最大层数
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, max_layers=10):
+    def __init__(self, max_layers=10, neuron_template=None):
         super().__init__()
-        self.or_gates = nn.ModuleList([VecOR() for _ in range(max_layers)])
+        self.or_gates = nn.ModuleList([VecOR(neuron_template) for _ in range(max_layers)])
     
     def forward(self, x):
         """
@@ -174,10 +206,14 @@ class VecANDTree(nn.Module):
     """并行AND树 - 检测所有位是否为1
     
     使用log2(n)层AND门并行归约，最多支持1024位输入
+    
+    Args:
+        max_layers: 最大层数
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, max_layers=10):
+    def __init__(self, max_layers=10, neuron_template=None):
         super().__init__()
-        self.and_gates = nn.ModuleList([VecAND() for _ in range(max_layers)])
+        self.and_gates = nn.ModuleList([VecAND(neuron_template) for _ in range(max_layers)])
     
     def forward(self, x):
         """
@@ -216,11 +252,14 @@ class VecHalfAdder(nn.Module):
     
     S = A XOR B
     C = A AND B
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.xor_gate = VecXOR()
-        self.and_gate = VecAND()
+        self.xor_gate = VecXOR(neuron_template)
+        self.and_gate = VecAND(neuron_template)
     
     def forward(self, a, b):
         s = self.xor_gate(a, b)
@@ -237,14 +276,17 @@ class VecFullAdder(nn.Module):
     
     S = A XOR B XOR Cin
     Cout = (A AND B) OR ((A XOR B) AND Cin)
+    
+    Args:
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.xor1 = VecXOR()
-        self.xor2 = VecXOR()
-        self.and1 = VecAND()
-        self.and2 = VecAND()
-        self.or1 = VecOR()
+        self.xor1 = VecXOR(neuron_template)
+        self.xor2 = VecXOR(neuron_template)
+        self.and1 = VecAND(neuron_template)
+        self.and2 = VecAND(neuron_template)
+        self.or1 = VecOR(neuron_template)
     
     def forward(self, a, b, cin):
         p = self.xor1(a, b)         # P = A XOR B
@@ -273,16 +315,20 @@ class VecAdder(nn.Module):
     1. P = A XOR B, G = A AND B 一次处理所有位
     2. 进位链仍是串行的（数学依赖不可避免）
     3. S = P XOR carries 一次处理所有位
+    
+    Args:
+        bits: 加法器位宽
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, bits):
+    def __init__(self, bits, neuron_template=None):
         super().__init__()
         self.bits = bits
         
-        self.xor1 = VecXOR()  # 计算 P
-        self.xor2 = VecXOR()  # 计算 S
-        self.and1 = VecAND()  # 计算 G
-        self.and2 = VecAND()  # P AND carry
-        self.or1 = VecOR()    # G OR (P AND carry)
+        self.xor1 = VecXOR(neuron_template)  # 计算 P
+        self.xor2 = VecXOR(neuron_template)  # 计算 S
+        self.and1 = VecAND(neuron_template)  # 计算 G
+        self.and2 = VecAND(neuron_template)  # P AND carry
+        self.or1 = VecOR(neuron_template)    # G OR (P AND carry)
         
     def forward(self, A, B, Cin=None):
         """
@@ -329,17 +375,21 @@ class VecSubtractor(nn.Module):
     """向量化N位减法器 - A - B (LSB first)
     
     使用补码减法: A - B = A + NOT(B) + 1
+    
+    Args:
+        bits: 减法器位宽
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, bits):
+    def __init__(self, bits, neuron_template=None):
         super().__init__()
         self.bits = bits
         
-        self.not_b = VecNOT()
-        self.xor1 = VecXOR()   # A XOR NOT(B)
-        self.xor2 = VecXOR()   # P XOR carry
-        self.and1 = VecAND()   # A AND NOT(B) (generate)
-        self.and2 = VecAND()   # P AND carry
-        self.or1 = VecOR()     # G OR (P AND carry)
+        self.not_b = VecNOT(neuron_template)
+        self.xor1 = VecXOR(neuron_template)   # A XOR NOT(B)
+        self.xor2 = VecXOR(neuron_template)   # P XOR carry
+        self.and1 = VecAND(neuron_template)   # A AND NOT(B) (generate)
+        self.and2 = VecAND(neuron_template)   # P AND carry
+        self.or1 = VecOR(neuron_template)     # G OR (P AND carry)
         
     def forward(self, A, B):
         """
@@ -395,20 +445,24 @@ class VecComparator(nn.Module):
     """向量化N位比较器 - 比较 A 和 B (MSB first)
     
     返回: (A > B, A == B)
+    
+    Args:
+        bits: 比较器位宽
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, bits):
+    def __init__(self, bits, neuron_template=None):
         super().__init__()
         self.bits = bits
         
-        self.xor_eq = VecXOR()      # 检测位相等
-        self.not_b = VecNOT()       # NOT(B)
-        self.and_gt = VecAND()      # A AND NOT(B) - A位为1且B位为0
-        self.and_tree = VecANDTree()
-        self.or_tree = VecORTree()
+        self.xor_eq = VecXOR(neuron_template)      # 检测位相等
+        self.not_b = VecNOT(neuron_template)       # NOT(B)
+        self.and_gt = VecAND(neuron_template)      # A AND NOT(B) - A位为1且B位为0
+        self.and_tree = VecANDTree(neuron_template=neuron_template)
+        self.or_tree = VecORTree(neuron_template=neuron_template)
         
         # 用于逐位比较的门
-        self.and_prefix = VecAND()  # 前缀相等 AND 当前位大于
-        self.or_result = VecOR()    # 累积结果
+        self.and_prefix = VecAND(neuron_template)  # 前缀相等 AND 当前位大于
+        self.or_result = VecOR(neuron_template)    # 累积结果
         
     def forward(self, A, B):
         """

@@ -1,5 +1,5 @@
 """
-正确的FP8 Linear测试：直接对比PyTorch FP8 matmul
+正确的FP8 Linear测试：直接对比PyTorch FP8 matmul（端到端浮点验证）
 """
 import torch
 import sys
@@ -9,19 +9,13 @@ from SNNTorch.atomic_ops import (
     PulseFloatingPointEncoder,
     SpikeFP8Linear_Fast
 )
-
-
-def pulse_to_fp8_bytes(pulse):
-    bits = pulse.int()
-    byte_val = torch.zeros(pulse.shape[:-1], dtype=torch.int32, device=pulse.device)
-    for i in range(8):
-        byte_val = byte_val + (bits[..., i] << (7 - i))
-    return byte_val
+from SNNTorch.atomic_ops.pulse_decoder import PulseFloatingPointDecoder
 
 
 def main():
+    """端到端浮点验证"""
     print("="*70)
-    print("正确的FP8 Linear测试")
+    print("正确的FP8 Linear测试（端到端浮点验证）")
     print("="*70)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -46,26 +40,10 @@ def main():
     print(f"x_fp8 shape: {x_fp8.shape}")
     print(f"w_fp8 shape: {w_fp8.shape}")
     
-    # PyTorch FP8 matmul
-    print("\n--- PyTorch FP8 计算 ---")
-    try:
-        # 尝试直接FP8 matmul
-        y_pytorch = torch._scaled_mm(
-            x_fp8, w_fp8.T,
-            out_dtype=torch.float8_e4m3fn
-        )
-        print(f"使用 torch._scaled_mm")
-        y_pytorch_bytes = y_pytorch.view(torch.uint8).int()
-    except Exception as e:
-        print(f"torch._scaled_mm 不支持: {e}")
-        # 退回到float计算
-        y_float = x_fp8.float() @ w_fp8.float().T
-        y_pytorch = y_float.to(torch.float8_e4m3fn)
-        y_pytorch_bytes = y_pytorch.view(torch.uint8).int()
-        print(f"使用 float32 matmul 后转 FP8")
-    
-    print(f"y_pytorch dtype: {y_pytorch.dtype}")
-    print(f"y_pytorch_bytes:\n{y_pytorch_bytes}")
+    # PyTorch 参考计算
+    print("\n--- PyTorch 参考计算 ---")
+    y_pytorch = (x_fp8.float() @ w_fp8.float().T).to(torch.float8_e4m3fn).float()
+    print(f"y_pytorch:\n{y_pytorch}")
     
     # SNN计算
     print("\n--- SNN FP8 计算 ---")
@@ -73,6 +51,7 @@ def main():
         exponent_bits=4, mantissa_bits=3,
         scan_integer_bits=10, scan_decimal_bits=10
     ).to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
     
     x_fp8_f32 = x_fp8.float()
     w_fp8_f32 = w_fp8.float()
@@ -87,14 +66,16 @@ def main():
         snn_linear.reset()
         
         y_snn_pulse = snn_linear(x_pulse)
-        y_snn_bytes = pulse_to_fp8_bytes(y_snn_pulse)
         
-        print(f"y_snn_bytes:\n{y_snn_bytes}")
+        decoder.reset()
+        y_snn = decoder(y_snn_pulse)
         
-        # 比较
-        match = (y_pytorch_bytes == y_snn_bytes)
+        print(f"y_snn:\n{y_snn}")
+        
+        # 直接比较浮点数
+        match = torch.isclose(y_snn, y_pytorch, rtol=1e-5, atol=1e-6) | (y_snn == y_pytorch)
         n_match = match.sum().item()
-        total = y_snn_bytes.numel()
+        total = y_snn.numel()
         rate = n_match / total * 100
         
         print(f"匹配: {n_match}/{total} = {rate:.1f}%")
@@ -105,7 +86,7 @@ def main():
             print(f"不匹配位置 (前5个):")
             for i in range(min(5, len(diff_idx[0]))):
                 b, o = diff_idx[0][i].item(), diff_idx[1][i].item()
-                print(f"  [{b},{o}]: PyTorch={y_pytorch_bytes[b,o].item()}, SNN={y_snn_bytes[b,o].item()}")
+                print(f"  [{b},{o}]: PyTorch={y_pytorch[b,o].item():.6f}, SNN={y_snn[b,o].item():.6f}")
 
 
 if __name__ == "__main__":

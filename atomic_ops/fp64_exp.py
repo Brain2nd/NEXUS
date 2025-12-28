@@ -66,36 +66,37 @@ class SpikeFP64Floor(nn.Module):
     
     FP64格式: [S | E10..E0 | M51..M0], bias=1023
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 指数减法器 (E - 1023)
-        self.exp_sub = nn.ModuleList([FullAdder() for _ in range(11)])
-        self.exp_not = nn.ModuleList([NOTGate() for _ in range(11)])
+        self.exp_sub = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
+        self.exp_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
         
         # E < 1023 检测
-        self.lt_bias_not = NOTGate()
+        self.lt_bias_not = NOTGate(neuron_template=nt)
         
         # E >= 1075 检测 (无小数)
-        self.ge_no_frac = nn.ModuleList([FullAdder() for _ in range(11)])
+        self.ge_no_frac = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
         
         # 尾数清零 (52位)
-        self.mant_clear_cmp = nn.ModuleList([nn.ModuleList([FullAdder() for _ in range(11)]) for _ in range(52)])
-        self.mant_clear_not = nn.ModuleList([NOTGate() for _ in range(52)])
-        self.mant_mux = nn.ModuleList([MUXGate() for _ in range(52)])
+        self.mant_clear_cmp = nn.ModuleList([nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)]) for _ in range(52)])
+        self.mant_clear_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(52)])
+        self.mant_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(52)])
         
         # 小数检测
-        self.frac_and = nn.ModuleList([ANDGate() for _ in range(52)])
-        self.frac_or = nn.ModuleList([ORGate() for _ in range(51)])
+        self.frac_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(52)])
+        self.frac_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(51)])
         
         # 负数处理 (floor = trunc - 1)
-        self.neg_frac_and = ANDGate()
-        self.fp64_adder = SpikeFP64Adder()
+        self.neg_frac_and = ANDGate(neuron_template=nt)
+        self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
         
         # 结果选择
-        self.lt_mux = nn.ModuleList([MUXGate() for _ in range(64)])
-        self.ge_mux = nn.ModuleList([MUXGate() for _ in range(64)])
-        self.neg_mux = nn.ModuleList([MUXGate() for _ in range(64)])
+        self.lt_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
+        self.ge_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
+        self.neg_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
         
     def forward(self, x):
         self.reset()
@@ -246,29 +247,30 @@ class SpikeFP64ScaleBy2K(nn.Module):
     
     k是一个FP64整数，需要正确提取其整数值然后加到x的指数上。
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # E - 1023
-        self.exp_sub_bias = nn.ModuleList([FullAdder() for _ in range(11)])
-        self.exp_not_bias = nn.ModuleList([NOTGate() for _ in range(11)])
+        self.exp_sub_bias = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
+        self.exp_not_bias = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
         
         # Barrel Shifter Right (提取k的整数值, 需要6层处理最多64位移动)
-        self.shift_layers = nn.ModuleList([nn.ModuleList([MUXGate() for _ in range(16)]) for _ in range(6)])
-        self.shift_not = nn.ModuleList([NOTGate() for _ in range(6)])
+        self.shift_layers = nn.ModuleList([nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16)]) for _ in range(6)])
+        self.shift_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(6)])
         
         # 符号处理
-        self.neg_not = nn.ModuleList([NOTGate() for _ in range(11)])
-        self.neg_add = nn.ModuleList([FullAdder() for _ in range(11)])
-        self.sign_mux = nn.ModuleList([MUXGate() for _ in range(11)])
+        self.neg_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
+        self.neg_add = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
+        self.sign_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(11)])
         
         # 指数相加
-        self.exp_add = nn.ModuleList([FullAdder() for _ in range(11)])
+        self.exp_add = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
         
         # k=0检测
-        self.k_zero_or = nn.ModuleList([ORGate() for _ in range(63)])
-        self.k_zero_not = NOTGate()
-        self.zero_mux = nn.ModuleList([MUXGate() for _ in range(64)])
+        self.k_zero_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(63)])
+        self.k_zero_not = NOTGate(neuron_template=nt)
+        self.zero_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
         
     def forward(self, x, k):
         self.reset()
@@ -390,8 +392,9 @@ class SpikeFP64ScaleBy2K(nn.Module):
 # ==============================================================================
 class SpikeFP64LookupExp2(nn.Module):
     """查表模块: T[j] = 2^(j/64), 64项"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 预计算64项查表值 (FP64精度)
         self.table_values = []
@@ -400,12 +403,12 @@ class SpikeFP64LookupExp2(nn.Module):
             self.table_values.append(float64_to_bits(val))
         
         # 6层 MUX 树 (2^6 = 64)
-        self.mux_l0 = nn.ModuleList([MUXGate() for _ in range(32 * 64)])
-        self.mux_l1 = nn.ModuleList([MUXGate() for _ in range(16 * 64)])
-        self.mux_l2 = nn.ModuleList([MUXGate() for _ in range(8 * 64)])
-        self.mux_l3 = nn.ModuleList([MUXGate() for _ in range(4 * 64)])
-        self.mux_l4 = nn.ModuleList([MUXGate() for _ in range(2 * 64)])
-        self.mux_l5 = nn.ModuleList([MUXGate() for _ in range(64)])
+        self.mux_l0 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32 * 64)])
+        self.mux_l1 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16 * 64)])
+        self.mux_l2 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8 * 64)])
+        self.mux_l3 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4 * 64)])
+        self.mux_l4 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(2 * 64)])
+        self.mux_l5 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
         
     def _make_constant(self, bits_val, batch_shape, device):
         pulse = torch.zeros(batch_shape + (64,), device=device)
@@ -503,20 +506,21 @@ class SpikeFP64LookupExp2(nn.Module):
 # ==============================================================================
 class SpikeFP64ExtractLow6(nn.Module):
     """从 [0, 63] 范围的 FP64 整数中提取 6-bit 二进制脉冲"""
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # E - 1023
-        self.exp_sub = nn.ModuleList([FullAdder() for _ in range(11)])
-        self.exp_not = nn.ModuleList([NOTGate() for _ in range(11)])
+        self.exp_sub = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
+        self.exp_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
         
         # shift解码
-        self.shift_not = nn.ModuleList([NOTGate() for _ in range(11)])
-        self.shift_and = nn.ModuleList([ANDGate() for _ in range(20)])
+        self.shift_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
+        self.shift_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(20)])
         
         # 输出逻辑
-        self.b_ands = nn.ModuleList([nn.ModuleList([ANDGate() for _ in range(7)]) for _ in range(6)])
-        self.b_ors = nn.ModuleList([nn.ModuleList([ORGate() for _ in range(6)]) for _ in range(6)])
+        self.b_ands = nn.ModuleList([nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(7)]) for _ in range(6)])
+        self.b_ors = nn.ModuleList([nn.ModuleList([ORGate(neuron_template=nt) for _ in range(6)]) for _ in range(6)])
         
     def forward(self, x):
         self.reset()
@@ -615,25 +619,26 @@ class SpikeFP64Exp(nn.Module):
     5. P = 1 + r + r^2/2 + r^3/6 + r^4/24
     6. res = 2^k * T * P
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
+        nt = neuron_template
         
         # 运算组件 - 增加了一个乘法器和一个减法器用于Cody-Waite，多项式增加到7阶需要更多
-        self.mul = nn.ModuleList([SpikeFP64Multiplier() for _ in range(13)]) # 13 -> 13
-        self.add = nn.ModuleList([SpikeFP64Adder() for _ in range(11)]) # 10 -> 11
+        self.mul = nn.ModuleList([SpikeFP64Multiplier(neuron_template=nt) for _ in range(13)]) # 13 -> 13
+        self.add = nn.ModuleList([SpikeFP64Adder(neuron_template=nt) for _ in range(11)]) # 10 -> 11
         
-        self.floor = SpikeFP64Floor()
-        self.floor_k = SpikeFP64Floor()
-        self.extract_j = SpikeFP64ExtractLow6()
-        self.lookup = SpikeFP64LookupExp2()
-        self.scale = SpikeFP64ScaleBy2K()
+        self.floor = SpikeFP64Floor(neuron_template=nt)
+        self.floor_k = SpikeFP64Floor(neuron_template=nt)
+        self.extract_j = SpikeFP64ExtractLow6(neuron_template=nt)
+        self.lookup = SpikeFP64LookupExp2(neuron_template=nt)
+        self.scale = SpikeFP64ScaleBy2K(neuron_template=nt)
         
         # 向量化门电路
-        self.vec_not = VecNOT()
-        self.vec_and = VecAND()
-        self.vec_mux = VecMUX()
-        self.vec_and_tree = VecANDTree()
-        self.vec_or_tree = VecORTree()
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_and_tree = VecANDTree(neuron_template=nt)
+        self.vec_or_tree = VecORTree(neuron_template=nt)
 
     def forward(self, x):
         self.reset()
@@ -789,11 +794,12 @@ class SpikeFP32ExpHighPrecision(nn.Module):
     
     流程: FP32输入 -> FP64 -> Exp计算 -> FP64 -> FP32输出
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
-        self.fp32_to_fp64 = FP32ToFP64Converter()
-        self.fp64_exp = SpikeFP64Exp()
-        self.fp64_to_fp32 = FP64ToFP32Converter()
+        nt = neuron_template
+        self.fp32_to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.fp64_exp = SpikeFP64Exp(neuron_template=nt)
+        self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
         
     def forward(self, x):
         """
@@ -829,17 +835,18 @@ class SpikeFP32SigmoidFullFP64(nn.Module):
     
     流程: FP32输入 -> FP64 -> 全部FP64计算 -> FP64 -> FP32输出
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         from .fp64_div import SpikeFP64Divider
+        nt = neuron_template
         
-        self.fp32_to_fp64 = FP32ToFP64Converter()
-        self.fp64_exp = SpikeFP64Exp()
-        self.fp64_adder = SpikeFP64Adder()
-        self.fp64_divider = SpikeFP64Divider()
-        self.fp64_to_fp32 = FP64ToFP32Converter()
+        self.fp32_to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.fp64_exp = SpikeFP64Exp(neuron_template=nt)
+        self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
+        self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
+        self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
         
-        self.sign_not = NOTGate()
+        self.sign_not = NOTGate(neuron_template=nt)
         
     def forward(self, x):
         """
@@ -889,19 +896,20 @@ class SpikeFP32SiLUFullFP64(nn.Module):
     
     SiLU(x) = x * sigmoid(x)
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         from .fp64_mul import SpikeFP64Multiplier
         from .fp64_div import SpikeFP64Divider
+        nt = neuron_template
         
-        self.fp32_to_fp64 = FP32ToFP64Converter()
-        self.fp64_exp = SpikeFP64Exp()
-        self.fp64_adder = SpikeFP64Adder()
-        self.fp64_divider = SpikeFP64Divider()
-        self.fp64_mul = SpikeFP64Multiplier()
-        self.fp64_to_fp32 = FP64ToFP32Converter()
+        self.fp32_to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.fp64_exp = SpikeFP64Exp(neuron_template=nt)
+        self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
+        self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
+        self.fp64_mul = SpikeFP64Multiplier(neuron_template=nt)
+        self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
         
-        self.sign_not = NOTGate()
+        self.sign_not = NOTGate(neuron_template=nt)
         
     def forward(self, x):
         self.reset()
@@ -946,15 +954,16 @@ class SpikeFP32SoftmaxFullFP64(nn.Module):
     
     Softmax(x_i) = exp(x_i) / sum(exp(x_j))
     """
-    def __init__(self):
+    def __init__(self, neuron_template=None):
         super().__init__()
         from .fp64_div import SpikeFP64Divider
+        nt = neuron_template
         
-        self.fp32_to_fp64 = FP32ToFP64Converter()
-        self.fp64_exp = SpikeFP64Exp()
-        self.fp64_adder = SpikeFP64Adder()
-        self.fp64_divider = SpikeFP64Divider()
-        self.fp64_to_fp32 = FP64ToFP32Converter()
+        self.fp32_to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.fp64_exp = SpikeFP64Exp(neuron_template=nt)
+        self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
+        self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
+        self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
         
     def forward(self, x):
         """

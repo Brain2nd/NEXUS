@@ -78,7 +78,21 @@ FP32 累加: ✓ 100% 对齐
 |------|------|------|
 | 膜电位泄漏 (β扫描) | `test_robustness.py` | LIF 神经元泄漏特性 |
 | 输入噪声 (σ扫描) | `test_robustness.py` | 高斯噪声鲁棒性 |
-| LIF 逻辑门 | `logic_gates_lif.py` | 物理模拟组件 |
+| neuron_template 统一架构 | `test_unified_neuron.py` | IF/LIF 神经元切换测试 |
+
+### neuron_template 统一架构
+
+所有物理模拟测试现在使用 `neuron_template` 参数动态切换神经元类型：
+
+```python
+from SNNTorch.atomic_ops.logic_gates import ANDGate, SimpleLIFNode
+
+# 使用 LIF 神经元进行物理仿真
+lif_template = SimpleLIFNode(beta=0.9)
+and_gate = ANDGate(neuron_template=lif_template)
+```
+
+⚠️ `logic_gates_lif.py` 已弃用，请使用上述统一架构。
 
 ## ⚠️ 注意事项
 

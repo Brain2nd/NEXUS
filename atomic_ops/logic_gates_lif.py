@@ -1,6 +1,49 @@
 """
-LIF 神经元逻辑门 (LIF Neuron Logic Gates)
-========================================
+⚠️ 已弃用 (DEPRECATED) ⚠️
+========================
+
+本模块已被 neuron_template 统一架构取代。
+
+请使用 logic_gates.py 中的组件，并通过 neuron_template 参数传递 SimpleLIFNode：
+
+新用法示例
+----------
+```python
+from SNNTorch.atomic_ops.logic_gates import ANDGate, SimpleLIFNode
+
+# 使用 neuron_template 动态切换神经元类型
+lif_template = SimpleLIFNode(beta=0.9)
+and_gate = ANDGate(neuron_template=lif_template)
+result = and_gate(a, b)
+
+# 不同 beta 值测试
+for beta in [1.0, 0.9, 0.5, 0.1]:
+    gate = ANDGate(neuron_template=SimpleLIFNode(beta=beta))
+    result = gate(a, b)
+```
+
+旧用法 (已弃用)
+--------------
+```python
+# ❌ 不推荐
+from SNNTorch.atomic_ops.logic_gates_lif import ANDGate_LIF
+and_gate = ANDGate_LIF(beta=0.9)  # 硬编码 LIF
+```
+
+迁移指南
+--------
+| 旧类 (弃用) | 新用法 |
+|-------------|--------|
+| ANDGate_LIF(beta) | ANDGate(neuron_template=SimpleLIFNode(beta)) |
+| ORGate_LIF(beta) | ORGate(neuron_template=SimpleLIFNode(beta)) |
+| XORGate_LIF(beta) | XORGate(neuron_template=SimpleLIFNode(beta)) |
+| RippleCarryAdder_LIF(bits, beta) | RippleCarryAdder(bits, neuron_template=SimpleLIFNode(beta)) |
+| ArrayMultiplier4x4_LIF(beta) | ArrayMultiplier4x4_Strict(neuron_template=SimpleLIFNode(beta)) |
+
+---
+
+LIF 神经元逻辑门 (LIF Neuron Logic Gates) - 已弃用
+=================================================
 
 用于物理硬件模拟和鲁棒性测试的 LIF 版本逻辑门。
 
@@ -15,44 +58,21 @@ LIF 神经元逻辑门 (LIF Neuron Logic Gates)
 软重置:     V(t) = V(t) - S(t) × V_th
 ```
 
-**参数说明**:
-- β (beta): 泄漏因子，0 < β ≤ 1
-  - β = 1.0: 退化为 IF 神经元（无泄漏）
-  - β < 1.0: 膜电位逐步衰减
-  - β → 0:   严重泄漏，信息快速丢失
-
-**物理意义**:
-- β 对应神经元膜电阻和膜电容的时间常数
-- 真实硬件中 β ≈ 0.9-0.99（取决于工艺）
-
-使用场景
---------
-1. 鲁棒性测试：评估不同泄漏程度下的计算正确性
-2. 硬件仿真：模拟真实神经形态芯片特性
-3. 能耗分析：LIF 比 IF 更接近真实功耗
-
-组件列表
---------
-- SimpleLIFNode: 基础 LIF 神经元
-- ANDGate_LIF, ORGate_LIF, XORGate_LIF, NOTGate_LIF
-- HalfAdder_LIF, FullAdder_LIF
-- RippleCarryAdder_LIF
-
-使用示例
---------
-```python
-# 测试不同泄漏程度
-for beta in [1.0, 0.9, 0.5, 0.1]:
-    and_gate = ANDGate_LIF(beta=beta)
-    result = and_gate(a, b)
-```
-
 作者: HumanBrain Project
 许可: MIT License
 """
+import warnings
 import torch
 import torch.nn as nn
 from spikingjelly.activation_based import neuron, surrogate
+
+# 发出弃用警告
+warnings.warn(
+    "logic_gates_lif 模块已弃用。请使用 logic_gates 中的组件并传递 neuron_template=SimpleLIFNode(beta)。"
+    "详见模块文档中的迁移指南。",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class SimpleLIFNode(nn.Module):

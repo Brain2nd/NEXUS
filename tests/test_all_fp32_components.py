@@ -1,6 +1,6 @@
 """
-FP32组件全面验证测试 - 真正并行版
-=================================
+FP32组件全面验证测试 - 真正并行版（端到端浮点验证）
+===================================================
 
 使用GPU + 向量化编码/解码实现真正并行。
 
@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import time
+
+from SNNTorch.atomic_ops.pulse_decoder import PulseFP32Decoder
 
 
 def float_to_pulse_vectorized(x: torch.Tensor) -> torch.Tensor:
@@ -27,20 +29,12 @@ def float_to_pulse_vectorized(x: torch.Tensor) -> torch.Tensor:
     return torch.stack(bits, dim=-1)
 
 
-def pulse_to_int_vectorized(p: torch.Tensor) -> torch.Tensor:
-    """向量化：脉冲 -> 整数位模式 [..., 32] -> [...]"""
-    # p: [..., 32], 每位是0或1
-    result = torch.zeros(p.shape[:-1], dtype=torch.int32, device=p.device)
-    for i in range(32):
-        result = result | (p[..., i].int() << (31 - i))
-    return result
-
-
 def test_exp(device, n_samples=100):
-    """测试SpikeFP32Exp - 并行"""
+    """测试SpikeFP32Exp - 并行（端到端浮点验证）"""
     from SNNTorch.atomic_ops import SpikeFP32Exp
     
     exp_mod = SpikeFP32Exp().to(device)
+    decoder = PulseFP32Decoder().to(device)
     torch.manual_seed(42)
     
     x = torch.randn(n_samples, device=device) * 2
@@ -49,7 +43,9 @@ def test_exp(device, n_samples=100):
     exp_mod.reset()
     result_pulse = exp_mod(x_pulse)  # [N, 32] - GPU并行
     
-    snn_bits = pulse_to_int_vectorized(result_pulse)  # 向量化
+    decoder.reset()
+    snn_result = decoder(result_pulse)
+    snn_bits = snn_result.view(torch.int32)
     pytorch_bits = torch.exp(x).view(torch.int32)  # 直接view
     
     match = (snn_bits == pytorch_bits).sum().item()
@@ -57,10 +53,11 @@ def test_exp(device, n_samples=100):
 
 
 def test_sqrt(device, n_samples=100):
-    """测试SpikeFP32Sqrt - 并行"""
+    """测试SpikeFP32Sqrt - 并行（端到端浮点验证）"""
     from SNNTorch.atomic_ops import SpikeFP32Sqrt
     
     sqrt_mod = SpikeFP32Sqrt().to(device)
+    decoder = PulseFP32Decoder().to(device)
     torch.manual_seed(42)
     
     x = torch.abs(torch.randn(n_samples, device=device)) * 10 + 0.1
@@ -69,7 +66,9 @@ def test_sqrt(device, n_samples=100):
     sqrt_mod.reset()
     result_pulse = sqrt_mod(x_pulse)
     
-    snn_bits = pulse_to_int_vectorized(result_pulse)
+    decoder.reset()
+    snn_result = decoder(result_pulse)
+    snn_bits = snn_result.view(torch.int32)
     pytorch_bits = torch.sqrt(x).view(torch.int32)
     
     match = (snn_bits == pytorch_bits).sum().item()
@@ -77,10 +76,11 @@ def test_sqrt(device, n_samples=100):
 
 
 def test_sigmoid(device, n_samples=100):
-    """测试SpikeFP32Sigmoid - 并行"""
+    """测试SpikeFP32Sigmoid - 并行（端到端浮点验证）"""
     from SNNTorch.atomic_ops import SpikeFP32Sigmoid
     
     sig_mod = SpikeFP32Sigmoid().to(device)
+    decoder = PulseFP32Decoder().to(device)
     torch.manual_seed(42)
     
     x = torch.randn(n_samples, device=device) * 3
@@ -89,7 +89,9 @@ def test_sigmoid(device, n_samples=100):
     sig_mod.reset()
     result_pulse = sig_mod(x_pulse)
     
-    snn_bits = pulse_to_int_vectorized(result_pulse)
+    decoder.reset()
+    snn_result = decoder(result_pulse)
+    snn_bits = snn_result.view(torch.int32)
     pytorch_bits = torch.sigmoid(x).view(torch.int32)
     
     match = (snn_bits == pytorch_bits).sum().item()
@@ -97,10 +99,11 @@ def test_sigmoid(device, n_samples=100):
 
 
 def test_silu(device, n_samples=100):
-    """测试SpikeFP32SiLU - 并行"""
+    """测试SpikeFP32SiLU - 并行（端到端浮点验证）"""
     from SNNTorch.atomic_ops import SpikeFP32SiLU
     
     silu_mod = SpikeFP32SiLU().to(device)
+    decoder = PulseFP32Decoder().to(device)
     torch.manual_seed(42)
     
     x = torch.randn(n_samples, device=device) * 3
@@ -109,7 +112,9 @@ def test_silu(device, n_samples=100):
     silu_mod.reset()
     result_pulse = silu_mod(x_pulse)
     
-    snn_bits = pulse_to_int_vectorized(result_pulse)
+    decoder.reset()
+    snn_result = decoder(result_pulse)
+    snn_bits = snn_result.view(torch.int32)
     pytorch_bits = F.silu(x).view(torch.int32)
     
     match = (snn_bits == pytorch_bits).sum().item()
@@ -117,11 +122,13 @@ def test_silu(device, n_samples=100):
 
 
 def test_embedding(device):
-    """测试SpikeFP32Embedding"""
+    """测试SpikeFP32Embedding（端到端浮点验证）"""
     from SNNTorch.atomic_ops import SpikeFP32Embedding
     
     vocab_size = 16
     embed_dim = 8
+    
+    decoder = PulseFP32Decoder().to(device)
     
     torch.manual_seed(42)
     ann_emb = nn.Embedding(vocab_size, embed_dim).to(device)
@@ -135,8 +142,11 @@ def test_embedding(device):
         ann_out = ann_emb(tokens)  # [V, D]
     snn_pulse = snn_emb(tokens)  # [V, D, 32]
     
+    decoder.reset()
+    snn_result = decoder(snn_pulse)
+    
     ann_bits = ann_out.view(torch.int32)  # [V, D]
-    snn_bits = pulse_to_int_vectorized(snn_pulse)  # [V, D]
+    snn_bits = snn_result.view(torch.int32)  # [V, D]
     
     match = (ann_bits == snn_bits).sum().item()
     total = vocab_size * embed_dim

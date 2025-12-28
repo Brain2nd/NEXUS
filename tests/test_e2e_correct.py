@@ -1,6 +1,6 @@
 """
 实验四：端到端验证 - SNN FP8 vs 手动顺序FP8累加
-正确对比：SNN与手动FP8顺序累加（而非PyTorch matmul）
+正确对比：SNN与手动FP8顺序累加（端到端浮点验证）
 """
 import torch
 import sys
@@ -10,9 +10,11 @@ from SNNTorch.atomic_ops import (
     PulseFloatingPointEncoder,
     SpikeFP8Linear_Fast
 )
+from SNNTorch.atomic_ops.pulse_decoder import PulseFloatingPointDecoder
 
 
 def pulse_to_fp8_bytes(pulse):
+    """脉冲转FP8字节值（用于比特比较）"""
     bits = pulse.int()
     byte_val = torch.zeros(pulse.shape[:-1], dtype=torch.int32, device=pulse.device)
     for i in range(8):
@@ -21,15 +23,15 @@ def pulse_to_fp8_bytes(pulse):
 
 
 def fp8_bytes_to_float(byte_val):
+    """FP8字节值转浮点数（用于调试输出）"""
     sign = (byte_val >> 7) & 1
     exp = (byte_val >> 3) & 0xF
     mant = byte_val & 0x7
     
     result = torch.zeros_like(byte_val, dtype=torch.float32)
-    is_nan = (exp == 15) & (mant == 7)
     is_zero = (exp == 0) & (mant == 0)
     is_subnormal = (exp == 0) & (mant != 0)
-    is_normal = ~is_nan & ~is_zero & ~is_subnormal
+    is_normal = ~is_zero & ~is_subnormal
     
     subnormal_val = (mant.float() / 8.0) * (2.0 ** -6)
     result = torch.where(is_subnormal, subnormal_val, result)

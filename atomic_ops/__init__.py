@@ -1,5 +1,20 @@
 """
 Atomic Ops Package - 100% 纯 SNN 门电路实现的浮点运算模块
+
+支持统一的神经元模板机制，可在 IF/LIF 之间切换用于物理仿真。
+
+使用示例:
+```python
+from atomic_ops import ANDGate, SimpleLIFNode, SpikeFP32Adder
+
+# 默认 IF 神经元 (理想数字逻辑)
+and_gate = ANDGate()
+
+# LIF 神经元 (物理仿真)
+lif_template = SimpleLIFNode(beta=0.9)
+and_gate_lif = ANDGate(neuron_template=lif_template)
+adder_lif = SpikeFP32Adder(neuron_template=lif_template)
+```
 """
 # 转换工具函数
 from .converters import (
@@ -10,6 +25,9 @@ from .converters import (
     float64_to_bits, bits_to_float64,
     float_to_pulse, pulse_to_bits
 )
+
+# 神经元模板 (用于物理仿真)
+from .logic_gates import SimpleLIFNode, _create_neuron
 
 # 基础门电路
 from .logic_gates import *

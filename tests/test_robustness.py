@@ -4,6 +4,8 @@
 
 模拟真实神经形态硬件的非理想特性，测试 SNN 组件的鲁棒性。
 
+**使用 neuron_template 统一架构** - 通过传递 SimpleLIFNode 动态切换神经元类型。
+
 测试场景
 --------
 
@@ -40,10 +42,9 @@ Vth_actual = Vth_nominal × (1 + δ)
 
 测试组件
 --------
-- 基本逻辑门: AND, OR, XOR (LIF 版本)
-- 算术单元: 4-bit 行波进位加法器, 4x4 阵列乘法器 (LIF 版本)
+- 基本逻辑门: AND, OR, XOR (使用 neuron_template=SimpleLIFNode)
+- 算术单元: 4-bit 行波进位加法器, 4x4 阵列乘法器
 - 浮点运算: FP8 乘法器, FP8/FP16/FP32 加法器 (输入噪声模拟)
-- 移位器: Barrel Shifter (LIF 版本)
 
 运行方式
 --------
@@ -59,10 +60,12 @@ sys.path.insert(0, "/home/dgxspark/Desktop/HumanBrain")
 
 import torch
 import numpy as np
-from SNNTorch.atomic_ops.logic_gates_lif import (
-    ANDGate_LIF, ORGate_LIF, XORGate_LIF, NOTGate_LIF,
-    HalfAdder_LIF, FullAdder_LIF, RippleCarryAdder_LIF,
-    ArrayMultiplier4x4_LIF, BarrelShifter8_LIF
+
+# 使用统一架构 - neuron_template
+from SNNTorch.atomic_ops.logic_gates import (
+    ANDGate, ORGate, XORGate, NOTGate,
+    HalfAdder, FullAdder, RippleCarryAdder,
+    ArrayMultiplier4x4_Strict, SimpleLIFNode
 )
 from SNNTorch.atomic_ops import (
     SpikeFP8Multiplier, SpikeFP8Adder_Spatial,
@@ -70,14 +73,22 @@ from SNNTorch.atomic_ops import (
 )
 
 
+def create_lif_template(beta=1.0):
+    """创建 LIF 神经元模板，用于物理仿真"""
+    return SimpleLIFNode(beta=beta, v_threshold=1.0)
+
+
 # ==============================================================================
-# 实验 2.1: β扫描 - 基本逻辑门
+# 实验 2.1: β扫描 - 基本逻辑门 (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_basic_gates_beta_scan(device):
-    """β扫描测试：不同泄漏因子下基本门的正确率"""
+    """β扫描测试：不同泄漏因子下基本门的正确率
+    
+    使用 neuron_template=SimpleLIFNode(beta) 动态切换神经元类型
+    """
     print("\n" + "="*70)
-    print("实验2.1: β扫描 - 泄漏因子对逻辑门正确率的影响")
+    print("实验2.1: β扫描 - 泄漏因子对逻辑门正确率的影响 (neuron_template)")
     print("="*70)
     
     betas = [1.0, 0.99, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.01]
@@ -90,15 +101,17 @@ def test_basic_gates_beta_scan(device):
     results = []
     
     for beta in betas:
-        and_gate = ANDGate_LIF(beta).to(device)
-        or_gate = ORGate_LIF(beta).to(device)
-        xor_gate = XORGate_LIF(beta).to(device)
+        # 使用 neuron_template 统一架构
+        lif_template = create_lif_template(beta)
+        and_gate = ANDGate(neuron_template=lif_template).to(device)
+        or_gate = ORGate(neuron_template=create_lif_template(beta)).to(device)
+        xor_gate = XORGate(neuron_template=create_lif_template(beta)).to(device)
         
         and_correct = or_correct = xor_correct = 0
         
         for i, (a, b) in enumerate(inputs):
-            a_t = torch.tensor([a], device=device)
-            b_t = torch.tensor([b], device=device)
+            a_t = torch.tensor([[a]], device=device)
+            b_t = torch.tensor([[b]], device=device)
             
             and_gate.reset()
             or_gate.reset()
@@ -127,13 +140,16 @@ def test_basic_gates_beta_scan(device):
 
 
 # ==============================================================================
-# 实验 2.2: σ扫描 - 基本逻辑门
+# 实验 2.2: σ扫描 - 基本逻辑门 (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_basic_gates_noise_scan(device):
-    """σ扫描测试：输入噪声对逻辑门正确率的影响"""
+    """σ扫描测试：输入噪声对逻辑门正确率的影响
+    
+    使用 neuron_template 统一架构，β=1.0 (IF神经元)
+    """
     print("\n" + "="*70)
-    print("实验2.2: σ扫描 - 输入噪声对逻辑门正确率的影响")
+    print("实验2.2: σ扫描 - 输入噪声对逻辑门正确率的影响 (neuron_template)")
     print("="*70)
     
     sigmas = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
@@ -147,9 +163,10 @@ def test_basic_gates_noise_scan(device):
     results = []
     
     for sigma in sigmas:
-        and_gate = ANDGate_LIF(1.0).to(device)
-        or_gate = ORGate_LIF(1.0).to(device)
-        xor_gate = XORGate_LIF(1.0).to(device)
+        # 使用 neuron_template 统一架构，β=1.0 相当于 IF 神经元
+        and_gate = ANDGate(neuron_template=create_lif_template(1.0)).to(device)
+        or_gate = ORGate(neuron_template=create_lif_template(1.0)).to(device)
+        xor_gate = XORGate(neuron_template=create_lif_template(1.0)).to(device)
         
         and_correct = or_correct = xor_correct = 0
         total = len(inputs) * num_trials
@@ -159,8 +176,8 @@ def test_basic_gates_noise_scan(device):
                 a_noisy = max(0.0, min(1.0, a + torch.randn(1, device=device).item() * sigma))
                 b_noisy = max(0.0, min(1.0, b + torch.randn(1, device=device).item() * sigma))
                 
-                a_t = torch.tensor([a_noisy], device=device)
-                b_t = torch.tensor([b_noisy], device=device)
+                a_t = torch.tensor([[a_noisy]], device=device)
+                b_t = torch.tensor([[b_noisy]], device=device)
                 
                 and_gate.reset()
                 or_gate.reset()
@@ -189,13 +206,16 @@ def test_basic_gates_noise_scan(device):
 
 
 # ==============================================================================
-# 实验 2.3: β扫描 - 4-bit 加法器
+# 实验 2.3: β扫描 - 4-bit 加法器 (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_adder_beta_scan(device):
-    """β扫描测试：4位加法器在不同泄漏因子下的正确率"""
+    """β扫描测试：4位加法器在不同泄漏因子下的正确率
+    
+    使用 neuron_template=SimpleLIFNode(beta) 动态切换神经元类型
+    """
     print("\n" + "="*70)
-    print("实验2.3: β扫描 - 泄漏因子对4位加法器的影响")
+    print("实验2.3: β扫描 - 泄漏因子对4位加法器的影响 (neuron_template)")
     print("="*70)
     
     betas = [1.0, 0.99, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
@@ -204,7 +224,8 @@ def test_adder_beta_scan(device):
     results = []
     
     for beta in betas:
-        adder = RippleCarryAdder_LIF(bits=4, beta=beta).to(device)
+        # 使用 neuron_template 统一架构
+        adder = RippleCarryAdder(bits=4, neuron_template=create_lif_template(beta)).to(device)
         correct = 0
         
         for _ in range(num_tests):
@@ -239,13 +260,16 @@ def test_adder_beta_scan(device):
 
 
 # ==============================================================================
-# 实验 2.4: σ扫描 - 4-bit 加法器
+# 实验 2.4: σ扫描 - 4-bit 加法器 (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_adder_noise_scan(device):
-    """σ扫描测试：4位加法器在输入噪声下的正确率"""
+    """σ扫描测试：4位加法器在输入噪声下的正确率
+    
+    使用 neuron_template 统一架构，β=1.0 (IF神经元)
+    """
     print("\n" + "="*70)
-    print("实验2.4: σ扫描 - 输入噪声对4位加法器的影响")
+    print("实验2.4: σ扫描 - 输入噪声对4位加法器的影响 (neuron_template)")
     print("="*70)
     
     sigmas = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5]
@@ -254,7 +278,8 @@ def test_adder_noise_scan(device):
     results = []
     
     for sigma in sigmas:
-        adder = RippleCarryAdder_LIF(bits=4, beta=1.0).to(device)
+        # 使用 neuron_template 统一架构
+        adder = RippleCarryAdder(bits=4, neuron_template=create_lif_template(1.0)).to(device)
         correct = 0
         
         for _ in range(num_tests):
@@ -299,13 +324,16 @@ def test_adder_noise_scan(device):
 
 
 # ==============================================================================
-# 实验 2.5: β扫描 - 4x4 乘法器
+# 实验 2.5: β扫描 - 4x4 乘法器 (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_multiplier_beta_scan(device):
-    """β扫描测试：4x4乘法器在不同泄漏因子下的正确率"""
+    """β扫描测试：4x4乘法器在不同泄漏因子下的正确率
+    
+    使用 neuron_template=SimpleLIFNode(beta) 动态切换神经元类型
+    """
     print("\n" + "="*70)
-    print("实验2.5: β扫描 - 泄漏因子对4x4乘法器的影响")
+    print("实验2.5: β扫描 - 泄漏因子对4x4乘法器的影响 (neuron_template)")
     print("="*70)
     
     betas = [1.0, 0.99, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3]
@@ -314,7 +342,8 @@ def test_multiplier_beta_scan(device):
     results = []
     
     for beta in betas:
-        mul = ArrayMultiplier4x4_LIF(beta=beta).to(device)
+        # 使用 neuron_template 统一架构
+        mul = ArrayMultiplier4x4_Strict(neuron_template=create_lif_template(beta)).to(device)
         correct = 0
         
         for _ in range(num_tests):
@@ -348,14 +377,19 @@ def test_multiplier_beta_scan(device):
 
 
 # ==============================================================================
-# 实验 2.6: σ扫描 - Barrel Shifter
+# 实验 2.6: σ扫描 - Barrel Shifter (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_barrel_shifter_noise_scan(device):
-    """σ扫描测试：Barrel Shifter在输入噪声下的正确率"""
+    """σ扫描测试：Barrel Shifter在输入噪声下的正确率
+    
+    使用 neuron_template 统一架构
+    """
     print("\n" + "="*70)
-    print("实验2.6: σ扫描 - 输入噪声对Barrel Shifter的影响")
+    print("实验2.6: σ扫描 - 输入噪声对Barrel Shifter的影响 (neuron_template)")
     print("="*70)
+    
+    from SNNTorch.atomic_ops.logic_gates import BarrelShifter8
     
     sigmas = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
     num_tests = 50
@@ -363,7 +397,8 @@ def test_barrel_shifter_noise_scan(device):
     results = []
     
     for sigma in sigmas:
-        bs = BarrelShifter8_LIF(beta=1.0).to(device)
+        # 使用 neuron_template 统一架构
+        bs = BarrelShifter8(neuron_template=create_lif_template(1.0)).to(device)
         correct = 0
         
         for _ in range(num_tests):
@@ -1046,13 +1081,16 @@ def test_fp8_mul_to_fp32_noise(device):
 
 
 # ==============================================================================
-# 实验 2.14: σ扫描 - 4x4 整数乘法器
+# 实验 2.14: σ扫描 - 4x4 整数乘法器 (使用 neuron_template 统一架构)
 # ==============================================================================
 
 def test_multiplier_noise_scan(device):
-    """σ扫描测试：4x4乘法器在输入噪声下的正确率"""
+    """σ扫描测试：4x4乘法器在输入噪声下的正确率
+    
+    使用 neuron_template 统一架构
+    """
     print("\n" + "="*70)
-    print("实验2.14: σ扫描 - 输入噪声对4x4乘法器的影响")
+    print("实验2.14: σ扫描 - 输入噪声对4x4乘法器的影响 (neuron_template)")
     print("="*70)
     
     sigmas = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
@@ -1061,7 +1099,8 @@ def test_multiplier_noise_scan(device):
     results = []
     
     for sigma in sigmas:
-        mul = ArrayMultiplier4x4_LIF(beta=1.0).to(device)
+        # 使用 neuron_template 统一架构
+        mul = ArrayMultiplier4x4_Strict(neuron_template=create_lif_template(1.0)).to(device)
         correct = 0
         
         for _ in range(num_tests):
@@ -1265,8 +1304,9 @@ def test_converters_noise(device):
 
 def main():
     print("="*70)
-    print("实验二：物理鲁棒性分析")
+    print("实验二：物理鲁棒性分析 (neuron_template 统一架构)")
     print("="*70)
+    print("\n注: 所有测试使用 neuron_template=SimpleLIFNode(beta) 动态切换神经元类型")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
