@@ -19,3 +19,4 @@ logs/
 results/
 .DS_Store
 .cursor/
+latex/
