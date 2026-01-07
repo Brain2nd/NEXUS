@@ -141,18 +141,27 @@ class DynamicThresholdIFNode(nn.Module):
     实现 SAR ADC 风格的二进制扫描:
     - 阈值从 2^(N-1) 递减到 2^(-NT)
     - 使用软复位保留残差
+    - 阈值预计算为 tensor，提高效率
 
     Args:
         N: 整数部分位宽，最高位阈值 2^(N-1)
         NT: 小数部分位宽，最低位阈值 2^(-NT)
+
+    Attributes:
+        thresholds: 预计算的阈值 tensor，形状为 [N + NT]
+                    thresholds[t] = 2^(N-1-t)，t = 0, 1, ..., N+NT-1
     """
     def __init__(self, N: int, NT: int = 0):
         super().__init__()
         self.N = N
         self.NT = NT
-        self.v_threshold = 1.0  # 将在 forward 中动态更新
+        self.total_steps = N + NT
         self.step_counter = 0
         self.register_buffer('v', None)
+
+        # 预计算所有时间步的阈值: [2^(N-1), 2^(N-2), ..., 2^0, 2^-1, ..., 2^-NT]
+        exponents = torch.arange(N - 1, -NT - 1, -1, dtype=torch.float32)
+        self.register_buffer('thresholds', (2.0 ** exponents))
 
     def forward(self, x: torch.Tensor):
         # 1. 积分 (仅第一步有效，后续靠残差)
@@ -160,20 +169,18 @@ class DynamicThresholdIFNode(nn.Module):
             self.v = torch.zeros_like(x)
         self.v = self.v + x
 
-        # 2. 计算动态阈值: 2^(N-1), ..., 2^0, 2^-1, ... 2^-NT
-        exponent = (self.N - 1) - self.step_counter
-
-        # 停止条件: 当 exponent 小于 -NT 时设置超大阈值
-        if exponent < -self.NT:
-            self.v_threshold = torch.tensor(1e9, device=x.device, dtype=x.dtype)
+        # 2. 获取当前时间步的阈值
+        if self.step_counter < self.total_steps:
+            v_threshold = self.thresholds[self.step_counter]
         else:
-            self.v_threshold = torch.tensor(2.0 ** exponent, device=x.device, dtype=x.dtype)
+            # 超出范围时使用超大阈值（不再发放）
+            v_threshold = torch.tensor(1e9, device=x.device, dtype=x.dtype)
 
         # 3. 发放
-        spike = (self.v >= self.v_threshold).float()
+        spike = (self.v >= v_threshold).float()
 
         # 4. 软复位 (减法重置，保留残差)
-        self.v = self.v - spike * self.v_threshold
+        self.v = self.v - spike * v_threshold
 
         # 5. 更新计数
         self.step_counter += 1
