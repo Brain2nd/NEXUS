@@ -96,8 +96,9 @@ adder_lif = SpikeFP32Adder(neuron_template=lif_template)
 ```
 
 ### Reset Mechanisms
-- **Encoder** (`DynamicThresholdIFNode`): **Must use soft reset** (V = V - V_threshold) to preserve residual for multi-bit extraction
-- **Logic Gates**: Can use hard reset (V = 0) since inputs are binary (0/1)
+- **All components use soft reset** (V = V - V_threshold) by default
+- **Encoder** (`DynamicThresholdIFNode`): Soft reset preserves residual for multi-bit extraction
+- **Logic Gates**: Soft reset ensures consistent behavior across IF/LIF neuron templates
 
 ## Code Organization
 
