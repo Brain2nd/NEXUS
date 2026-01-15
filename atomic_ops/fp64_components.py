@@ -492,30 +492,24 @@ class FP32ToFP64Converter(nn.Module):
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
-        # 检测 FP32 E=0
-        self.e_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(7)])
-        self.e_is_zero_not = NOTGate(neuron_template=nt)
-        
-        # 检测 M≠0
-        self.m_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(22)])
-        
+
+        # 向量化检测门电路
+        self.e_or_tree = VecORTree(neuron_template=nt)      # 检测 E≠0
+        self.e_is_zero_not = VecNOT(neuron_template=nt)
+        self.m_or_tree = VecORTree(neuron_template=nt)      # 检测 M≠0
+        self.exp_all_one_and_tree = VecANDTree(neuron_template=nt)  # 检测 E=全1
+
         # 11位加法器: FP32_exp (8位扩展) + 896
         self.exp_adder = RippleCarryAdder(bits=11, neuron_template=nt)
-        
-        # E=0时选择0指数
-        self.exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(11)])
-        
-        # NaN/Inf检测
-        self.exp_all_one_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(7)])
-        self.is_nan_and = ANDGate(neuron_template=nt)
-        self.mant_zero_not = NOTGate(neuron_template=nt)
-        self.is_inf_and = ANDGate(neuron_template=nt)
-        
-        # NaN/Inf输出选择
-        self.nan_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
-        self.inf_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
-        
+
+        # 向量化MUX
+        self.exp_mux = VecMUX(neuron_template=nt)           # E=0时选择0指数
+        self.is_nan_and = VecAND(neuron_template=nt)
+        self.mant_zero_not = VecNOT(neuron_template=nt)
+        self.is_inf_and = VecAND(neuron_template=nt)
+        self.nan_mux = VecMUX(neuron_template=nt)           # NaN输出选择
+        self.inf_mux = VecMUX(neuron_template=nt)           # Inf输出选择
+
     def forward(self, fp32_pulse):
         """
         Args:
@@ -528,103 +522,82 @@ class FP32ToFP64Converter(nn.Module):
         batch_shape = fp32_pulse.shape[:-1]
         zeros = torch.zeros(batch_shape + (1,), device=device)
         ones = torch.ones(batch_shape + (1,), device=device)
-        
+        zeros_11 = torch.zeros(batch_shape + (11,), device=device)
+        zeros_52 = torch.zeros(batch_shape + (52,), device=device)
+
         # 提取 FP32 各部分
         s = fp32_pulse[..., 0:1]
         e = fp32_pulse[..., 1:9]    # [E7..E0] MSB first
         m = fp32_pulse[..., 9:32]   # [M22..M0] MSB first
-        
-        # 检测 E=0
-        e_any = e[..., 0:1]
-        for i in range(1, 8):
-            e_any = self.e_or[i-1](e_any, e[..., i:i+1])
-        e_is_zero = self.e_is_zero_not(e_any)
-        
-        # 检测 M≠0
-        m_any = m[..., 0:1]
-        for i in range(1, 23):
-            m_any = self.m_or[i-1](m_any, m[..., i:i+1])
-        
-        # 检测 E=全1 (Inf/NaN)
-        e_all_one = e[..., 0:1]
-        for i in range(1, 8):
-            e_all_one = self.exp_all_one_and[i-1](e_all_one, e[..., i:i+1])
-        
+
+        # 向量化检测 E=0, M≠0, E=全1
+        e_any = self.e_or_tree(e)                    # [..., 1]
+        e_is_zero = self.e_is_zero_not(e_any)       # [..., 1]
+        m_any = self.m_or_tree(m)                    # [..., 1]
+        e_all_one = self.exp_all_one_and_tree(e)   # [..., 1]
+
         m_is_zero = self.mant_zero_not(m_any)
         is_nan = self.is_nan_and(e_all_one, m_any)
         is_inf = self.is_inf_and(e_all_one, m_is_zero)
-        
+
         # FP32 exp 扩展到 11 位 (LSB first for adder)
         e_lsb = e.flip(-1)  # 转 LSB first
         fp32_exp_11bit_lsb = torch.cat([e_lsb, zeros, zeros, zeros], dim=-1)
-        
+
         # +896 = 0b01110000000, LSB first: [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0]
-        const_896_lsb = torch.cat([zeros, zeros, zeros, zeros, zeros, zeros, zeros, 
+        const_896_lsb = torch.cat([zeros, zeros, zeros, zeros, zeros, zeros, zeros,
                                     ones, ones, ones, zeros], dim=-1)
-        
+
         # 加法 (LSB first)
         fp64_exp_raw_lsb, _ = self.exp_adder(fp32_exp_11bit_lsb, const_896_lsb)
-        
+
         # 转回 MSB first
         fp64_exp_raw = fp64_exp_raw_lsb.flip(-1)
-        
-        # E=0 时保持 0
-        fp64_exp = []
-        for i in range(11):
-            exp_bit = self.exp_mux[i](e_is_zero, zeros, fp64_exp_raw[..., i:i+1])
-            fp64_exp.append(exp_bit)
-        fp64_exp = torch.cat(fp64_exp, dim=-1)
-        
+
+        # E=0 时保持 0 (向量化MUX)
+        e_is_zero_exp = e_is_zero.expand_as(fp64_exp_raw)
+        fp64_exp = self.exp_mux(e_is_zero_exp, zeros_11, fp64_exp_raw)
+
         # 尾数: 高23位复制, 低29位补0
-        fp64_mant = torch.cat([m] + [zeros]*29, dim=-1)
-        
+        fp64_mant = torch.cat([m, zeros.expand(batch_shape + (29,))], dim=-1)
+
         # 组装 FP64
         result = torch.cat([s, fp64_exp, fp64_mant], dim=-1)
-        
-        # NaN处理: FP64 NaN = S, E=全1, M=非零
-        nan_exp = torch.cat([ones]*11, dim=-1)
-        nan_mant = torch.cat([ones] + [zeros]*51, dim=-1)  # Quiet NaN
+
+        # NaN处理: FP64 NaN = S, E=全1, M=非零 (向量化MUX)
+        nan_exp = ones.expand(batch_shape + (11,))
+        nan_mant = torch.cat([ones, zeros.expand(batch_shape + (51,))], dim=-1)
         nan_result = torch.cat([s, nan_exp, nan_mant], dim=-1)
-        
-        result_bits = []
-        for i in range(64):
-            bit = self.nan_mux[i](is_nan, nan_result[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        # Inf处理: FP64 Inf = S, E=全1, M=0
-        inf_exp = torch.cat([ones]*11, dim=-1)
-        inf_mant = torch.cat([zeros]*52, dim=-1)
-        inf_result = torch.cat([s, inf_exp, inf_mant], dim=-1)
-        
-        result_bits = []
-        for i in range(64):
-            bit = self.inf_mux[i](is_inf, inf_result[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
+        is_nan_64 = is_nan.expand_as(result)
+        result = self.nan_mux(is_nan_64, nan_result, result)
+
+        # Inf处理: FP64 Inf = S, E=全1, M=0 (向量化MUX)
+        inf_result = torch.cat([s, nan_exp, zeros_52], dim=-1)
+        is_inf_64 = is_inf.expand_as(result)
+        result = self.inf_mux(is_inf_64, inf_result, result)
+
         return result
-    
+
     def reset(self):
-        for g in self.e_or: g.reset()
+        self.e_or_tree.reset()
         self.e_is_zero_not.reset()
-        for g in self.m_or: g.reset()
+        self.m_or_tree.reset()
+        self.exp_all_one_and_tree.reset()
         self.exp_adder.reset()
-        for mux in self.exp_mux: mux.reset()
-        for g in self.exp_all_one_and: g.reset()
+        self.exp_mux.reset()
         self.is_nan_and.reset()
         self.mant_zero_not.reset()
         self.is_inf_and.reset()
-        for mux in self.nan_mux: mux.reset()
-        for mux in self.inf_mux: mux.reset()
+        self.nan_mux.reset()
+        self.inf_mux.reset()
 
 
 class FP64ToFP32Converter(nn.Module):
-    """FP64 -> FP32 转换器 (100%纯SNN门电路)
-    
+    """FP64 -> FP32 转换器 (100%纯SNN门电路 - 向量化版本)
+
     FP64: [S | E10..E0 | M51..M0], bias=1023, 64位
     FP32: [S | E7..E0 | M22..M0], bias=127, 32位
-    
+
     转换规则:
     - sign: 直接复制
     - exp: FP32_exp = FP64_exp - 896
@@ -633,41 +606,41 @@ class FP64ToFP32Converter(nn.Module):
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
+
         # 指数减法
         self.exp_sub = Subtractor11Bit(neuron_template=nt)
-        
+
         # 溢出/下溢检测
         self.overflow_cmp = Comparator11Bit(neuron_template=nt)
         self.underflow_cmp = Comparator11Bit(neuron_template=nt)
-        
-        # NaN/Inf检测
-        self.nan_exp_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(10)])
-        self.nan_mant_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(51)])
-        self.is_nan_and = ANDGate(neuron_template=nt)
-        self.mant_zero_not = NOTGate(neuron_template=nt)
-        self.is_inf_and = ANDGate(neuron_template=nt)
-        
-        # RNE舍入
-        self.rne_or = ORGate(neuron_template=nt)
-        self.rne_and = ANDGate(neuron_template=nt)
-        self.sticky_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(28)])
-        
+
+        # 向量化 NaN/Inf 检测
+        self.nan_exp_and_tree = VecANDTree(neuron_template=nt)
+        self.nan_mant_or_tree = VecORTree(neuron_template=nt)
+        self.is_nan_and = VecAND(neuron_template=nt)
+        self.mant_zero_not = VecNOT(neuron_template=nt)
+        self.is_inf_and = VecAND(neuron_template=nt)
+
+        # 向量化 RNE 舍入
+        self.sticky_or_tree = VecORTree(neuron_template=nt)
+        self.rne_or = VecOR(neuron_template=nt)
+        self.rne_and = VecAND(neuron_template=nt)
+
         # 尾数+1
         self.mant_inc = RippleCarryAdder(bits=24, neuron_template=nt)
-        self.not_carry = NOTGate(neuron_template=nt)
-        self.mant_clear_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(23)])
-        
+        self.not_carry = VecNOT(neuron_template=nt)
+        self.mant_clear_and = VecAND(neuron_template=nt)
+
         # 指数+1
         self.exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
-        
-        # 结果选择MUX
-        self.overflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
-        self.underflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
-        self.nan_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
-        self.inf_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32)])
-        self.round_exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8)])
-        
+
+        # 向量化结果选择MUX
+        self.round_exp_mux = VecMUX(neuron_template=nt)
+        self.overflow_mux = VecMUX(neuron_template=nt)
+        self.underflow_mux = VecMUX(neuron_template=nt)
+        self.nan_mux = VecMUX(neuron_template=nt)
+        self.inf_mux = VecMUX(neuron_template=nt)
+
     def forward(self, fp64_pulse):
         """
         Args:
@@ -680,144 +653,118 @@ class FP64ToFP32Converter(nn.Module):
         batch_shape = fp64_pulse.shape[:-1]
         zeros = torch.zeros(batch_shape + (1,), device=device)
         ones = torch.ones(batch_shape + (1,), device=device)
-        
+
         s = fp64_pulse[..., 0:1]
         fp64_exp = fp64_pulse[..., 1:12]   # [E10..E0] MSB first
         fp64_mant = fp64_pulse[..., 12:64]  # [M51..M0] MSB first
-        
-        # NaN检测: E=全1, M≠0
-        e_all_one = fp64_exp[..., 0:1]
-        for i in range(1, 11):
-            e_all_one = self.nan_exp_and[i-1](e_all_one, fp64_exp[..., i:i+1])
-        
-        m_any_one = fp64_mant[..., 0:1]
-        for i in range(1, 52):
-            m_any_one = self.nan_mant_or[i-1](m_any_one, fp64_mant[..., i:i+1])
-        
+
+        # 向量化 NaN/Inf 检测
+        e_all_one = self.nan_exp_and_tree(fp64_exp)    # [..., 1]
+        m_any_one = self.nan_mant_or_tree(fp64_mant)   # [..., 1]
+
         is_nan = self.is_nan_and(e_all_one, m_any_one)
         m_is_zero = self.mant_zero_not(m_any_one)
         is_inf = self.is_inf_and(e_all_one, m_is_zero)
-        
+
         # 指数转换: FP32_exp = FP64_exp - 896 (LSB first)
         fp64_exp_lsb = fp64_exp.flip(-1)
-        # 896 = 0b01110000000, LSB first = [0,0,0,0,0,0,0,1,1,1,0]
         const_896_lsb = torch.cat([zeros, zeros, zeros, zeros, zeros, zeros, zeros,
                                     ones, ones, ones, zeros], dim=-1)
         fp32_exp_raw_lsb, _ = self.exp_sub(fp64_exp_lsb, const_896_lsb)
-        
+
         # 取低8位
         fp32_exp_lsb = fp32_exp_raw_lsb[..., :8]
         fp32_exp = fp32_exp_lsb.flip(-1)
-        
-        # 溢出检测: FP64_exp > 1150 (FP32_exp > 254)
-        # 1150 = 0b10001111110
+
+        # 溢出检测: FP64_exp > 1150
         const_1150 = torch.cat([ones, zeros, zeros, zeros, ones, ones, ones, ones, ones, ones, zeros], dim=-1)
         is_overflow, _ = self.overflow_cmp(fp64_exp, const_1150)
-        
+
         # 下溢检测: FP64_exp < 897
-        # 897 = 0b01110000001
         const_897 = torch.cat([zeros, ones, ones, ones, zeros, zeros, zeros, zeros, zeros, zeros, ones], dim=-1)
         is_underflow, _ = self.underflow_cmp(const_897, fp64_exp)
-        
-        # RNE舍入
-        # 取高23位作为FP32尾数
+
+        # 向量化 RNE 舍入
         fp32_mant_raw = fp64_mant[..., :23]
         L = fp64_mant[..., 22:23]   # LSB
         R = fp64_mant[..., 23:24]   # Round bit
-        S = fp64_mant[..., 24:25]   # Start of sticky
-        for i in range(28):
-            idx = 25 + i
-            if idx < 52:
-                S = self.sticky_or[i](S, fp64_mant[..., idx:idx+1])
-        
+        sticky_bits = fp64_mant[..., 24:52]  # 28 sticky bits
+        S = self.sticky_or_tree(sticky_bits)  # 向量化 OR
+
         s_or_l = self.rne_or(S, L)
         round_up = self.rne_and(R, s_or_l)
-        
+
         # 尾数+1 (LSB first)
         fp32_mant_lsb = fp32_mant_raw.flip(-1)
         mant_24bit_lsb = torch.cat([fp32_mant_lsb, zeros], dim=-1)
-        round_inc_lsb = torch.cat([round_up] + [zeros]*23, dim=-1)
+        round_inc_lsb = torch.cat([round_up, zeros.expand(batch_shape + (23,))], dim=-1)
         mant_rounded_lsb, _ = self.mant_inc(mant_24bit_lsb, round_inc_lsb)
-        
+
         mant_carry = mant_rounded_lsb[..., 23:24]
         fp32_mant = mant_rounded_lsb[..., :23].flip(-1)
-        
-        # 如果尾数进位, 尾数清零
+
+        # 向量化: 如果尾数进位, 尾数清零
         not_carry = self.not_carry(mant_carry)
-        fp32_mant_final = []
-        for i in range(23):
-            fp32_mant_final.append(self.mant_clear_and[i](not_carry, fp32_mant[..., i:i+1]))
-        fp32_mant_final = torch.cat(fp32_mant_final, dim=-1)
-        
+        not_carry_23 = not_carry.expand_as(fp32_mant)
+        fp32_mant_final = self.mant_clear_and(not_carry_23, fp32_mant)
+
         # 如果尾数进位, 指数+1
-        exp_inc_lsb = torch.cat([mant_carry] + [zeros]*7, dim=-1)
+        exp_inc_lsb = torch.cat([mant_carry, zeros.expand(batch_shape + (7,))], dim=-1)
         exp_after_round_lsb, _ = self.exp_inc(fp32_exp_lsb, exp_inc_lsb)
         exp_after_round = exp_after_round_lsb.flip(-1)
-        
-        final_exp = []
-        for i in range(8):
-            e_sel = self.round_exp_mux[i](mant_carry, exp_after_round[..., i:i+1], fp32_exp[..., i:i+1])
-            final_exp.append(e_sel)
-        final_exp = torch.cat(final_exp, dim=-1)
-        
+
+        # 向量化: 选择最终指数
+        mant_carry_8 = mant_carry.expand_as(fp32_exp)
+        final_exp = self.round_exp_mux(mant_carry_8, exp_after_round, fp32_exp)
+
         # 组装结果
         result = torch.cat([s, final_exp, fp32_mant_final], dim=-1)
-        
-        # 特殊值处理
-        nan_val = torch.cat([s] + [ones]*8 + [ones] + [zeros]*22, dim=-1)
-        inf_val = torch.cat([s] + [ones]*8 + [zeros]*23, dim=-1)
-        zero_val = torch.cat([s] + [zeros]*31, dim=-1)
-        
-        # 溢出 -> Inf
-        result_bits = []
-        for i in range(32):
-            bit = self.overflow_mux[i](is_overflow, inf_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        # 下溢 -> 0
-        result_bits = []
-        for i in range(32):
-            bit = self.underflow_mux[i](is_underflow, zero_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        # Inf
-        result_bits = []
-        for i in range(32):
-            bit = self.inf_mux[i](is_inf, inf_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        # NaN
-        result_bits = []
-        for i in range(32):
-            bit = self.nan_mux[i](is_nan, nan_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
+
+        # 特殊值处理 (向量化)
+        ones_8 = ones.expand(batch_shape + (8,))
+        zeros_22 = zeros.expand(batch_shape + (22,))
+        zeros_23 = zeros.expand(batch_shape + (23,))
+        zeros_31 = zeros.expand(batch_shape + (31,))
+
+        nan_val = torch.cat([s, ones_8, ones, zeros_22], dim=-1)
+        inf_val = torch.cat([s, ones_8, zeros_23], dim=-1)
+        zero_val = torch.cat([s, zeros_31], dim=-1)
+
+        # 向量化 MUX 选择
+        is_overflow_32 = is_overflow.expand_as(result)
+        result = self.overflow_mux(is_overflow_32, inf_val, result)
+
+        is_underflow_32 = is_underflow.expand_as(result)
+        result = self.underflow_mux(is_underflow_32, zero_val, result)
+
+        is_inf_32 = is_inf.expand_as(result)
+        result = self.inf_mux(is_inf_32, inf_val, result)
+
+        is_nan_32 = is_nan.expand_as(result)
+        result = self.nan_mux(is_nan_32, nan_val, result)
+
         return result
-    
+
     def reset(self):
         self.exp_sub.reset()
         self.overflow_cmp.reset()
         self.underflow_cmp.reset()
-        for g in self.nan_exp_and: g.reset()
-        for g in self.nan_mant_or: g.reset()
+        self.nan_exp_and_tree.reset()
+        self.nan_mant_or_tree.reset()
         self.is_nan_and.reset()
         self.mant_zero_not.reset()
         self.is_inf_and.reset()
+        self.sticky_or_tree.reset()
         self.rne_or.reset()
         self.rne_and.reset()
-        for g in self.sticky_or: g.reset()
         self.mant_inc.reset()
         self.not_carry.reset()
-        for g in self.mant_clear_and: g.reset()
+        self.mant_clear_and.reset()
         self.exp_inc.reset()
-        for mux in self.overflow_mux: mux.reset()
-        for mux in self.underflow_mux: mux.reset()
-        for mux in self.nan_mux: mux.reset()
-        for mux in self.inf_mux: mux.reset()
-        for mux in self.round_exp_mux: mux.reset()
+        self.round_exp_mux.reset()
+        self.overflow_mux.reset()
+        self.underflow_mux.reset()
+        self.nan_mux.reset()
+        self.inf_mux.reset()
 
 

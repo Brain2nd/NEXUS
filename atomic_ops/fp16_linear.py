@@ -104,10 +104,8 @@ class SpikeFP16Linear_MultiPrecision(nn.Module):
             self.output_converter = FP32ToFP16Converter(neuron_template=nt)
         else:
             # FP16 累加模式
-            # 先将 FP32 乘积转为 FP16，再累加
-            self.fp32_to_fp16_converters = nn.ModuleList([
-                FP32ToFP16Converter(neuron_template=nt) for _ in range(in_features)
-            ])
+            # 向量化转换：单个转换器处理所有元素
+            self.fp32_to_fp16_converter = FP32ToFP16Converter(neuron_template=nt)
             self.fp16_adders = nn.ModuleList([
                 SpikeFP16Adder(neuron_template=nt) for _ in range(max(1, in_features - 1))
             ])
@@ -153,7 +151,7 @@ class SpikeFP16Linear_MultiPrecision(nn.Module):
         else:
             # FP16 模式：FP32转FP16 → FP16累加 → 输出FP16脉冲
             if self.in_features == 1:
-                return self.fp32_to_fp16_converters[0](products_fp32.squeeze(-2))
+                return self.fp32_to_fp16_converter(products_fp32.squeeze(-2))
             return self._fp16_accumulate(products_fp32)
 
     def _fp32_accumulate(self, products_fp32):
@@ -170,16 +168,15 @@ class SpikeFP16Linear_MultiPrecision(nn.Module):
 
     def _fp16_accumulate(self, products_fp32):
         """FP16 累加：FP32转FP16 → FP16累加 → 输出FP16脉冲"""
-        # 将所有 FP32 乘积转换为 FP16
-        products_fp16 = []
-        for i in range(self.in_features):
-            p_fp16 = self.fp32_to_fp16_converters[i](products_fp32[..., i, :])
-            products_fp16.append(p_fp16)
+        # 向量化转换：一次处理所有 in_features 个乘积
+        # products_fp32: [..., out_features, in_features, 32]
+        # products_fp16: [..., out_features, in_features, 16]
+        products_fp16 = self.fp32_to_fp16_converter(products_fp32)
 
-        # 顺序累加
-        acc = products_fp16[0]
+        # 顺序累加（累加存在依赖，需要循环）
+        acc = products_fp16[..., 0, :]
         for i in range(1, self.in_features):
-            acc = self.fp16_adders[i-1](acc, products_fp16[i])
+            acc = self.fp16_adders[i-1](acc, products_fp16[..., i, :])
         return acc
 
     def reset_all(self):

@@ -66,6 +66,7 @@ from .logic_gates import (
     FirstSpikeDetector, TemporalExponentGenerator, DelayNode,
     ORTree, MUXGate, ANDGate, ORGate, NOTGate
 )
+from .vec_logic_gates import VecAND, VecOR
 
 
 class PulseFloatingPointEncoder(nn.Module):
@@ -94,56 +95,58 @@ class PulseFloatingPointEncoder(nn.Module):
         >>> x = torch.tensor([1.5, -2.0])
         >>> pulse = encoder(x)  # [2, 8]
     """
-    def __init__(self, exponent_bits: int = 4, mantissa_bits: int = 3, 
-                 scan_integer_bits: int = 10, scan_decimal_bits: int = 10):
+    def __init__(self, exponent_bits: int = 4, mantissa_bits: int = 3,
+                 scan_integer_bits: int = 10, scan_decimal_bits: int = 10,
+                 neuron_template=None):
         super().__init__()
         self.E_bits = exponent_bits
         self.M_bits = mantissa_bits
         self.total_bits = 1 + exponent_bits + mantissa_bits
         self.bias = (2 ** (exponent_bits - 1)) - 1  # 7
-        
+        nt = neuron_template
+
         self.scanner_N = scan_integer_bits
         self.scanner_NT = scan_decimal_bits
         self.total_steps = scan_integer_bits + scan_decimal_bits
-        
+
         # 1. 符号
         self.sign_node = SignBitNode()
-        
+
         # 2. 扫描
         self.binary_scanner = DynamicThresholdIFNode(N=scan_integer_bits, NT=scan_decimal_bits)
-        
+
         # 3. 首脉冲
         self.first_spike_detector = FirstSpikeDetector(self.total_steps)
-        
+
         # 4. 指数生成 (时序)
         # 初始值：t=0 时对应指数。
         # 阈值 2^(N-1) -> E = (N-1) + bias
         # 因为 exp_gen 先减后输出，所以初始值要 +1
         start_exp = scan_integer_bits + self.bias
         self.exp_generator = TemporalExponentGenerator(start_value=start_exp, bits=exponent_bits)
-        
+
         # 5. 尾数提取 (延迟线)
         # 需要 M_bits 个延迟节点链
         self.delay_nodes = nn.ModuleList()
         for _ in range(mantissa_bits):
             self.delay_nodes.append(DelayNode())
-            
-        # 逻辑门 - 纯 SNN 实现
-        self.and_latch_e = nn.ModuleList([ANDGate() for _ in range(exponent_bits)])
-        self.or_accum_e = nn.ModuleList([ORGate() for _ in range(exponent_bits)])
-        
-        self.and_sample_m = nn.ModuleList([ANDGate() for _ in range(mantissa_bits)])
-        self.or_accum_m = nn.ModuleList([ORGate() for _ in range(mantissa_bits)])
-        
+
+        # 逻辑门 - 纯 SNN 向量化实现
+        self.vec_and_latch_e = VecAND(neuron_template=nt)
+        self.vec_or_accum_e = VecOR(neuron_template=nt)
+
+        self.vec_and_sample_m = VecAND(neuron_template=nt)
+        self.vec_or_accum_m = VecOR(neuron_template=nt)
+
         # 首脉冲检测门电路
-        self.not_fired = NOTGate()
-        self.and_first_spike = ANDGate()
-        self.or_has_fired = ORGate()
-        
+        self.not_fired = NOTGate(neuron_template=nt)
+        self.and_first_spike = ANDGate(neuron_template=nt)
+        self.or_has_fired = ORGate(neuron_template=nt)
+
         # Subnormal 采样门电路
-        self.not_for_sub = NOTGate()
-        self.and_sub_sample = ANDGate()
-        self.or_sub_m = nn.ModuleList([ORGate() for _ in range(mantissa_bits)])
+        self.not_for_sub = NOTGate(neuron_template=nt)
+        self.and_sub_sample = ANDGate(neuron_template=nt)
+        self.or_sub_m = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(mantissa_bits)])
         
         # 寄存器 (累积结果)
         self.register_buffer('e_reg', None)
@@ -209,11 +212,13 @@ class PulseFloatingPointEncoder(nn.Module):
             # 只有在 Normal 区域才锁存指数 (Subnormal E=0)
             # 使用纯 SNN 门电路
             if t < self.subnormal_start_step:
-                for b in range(self.E_bits):
-                    self.and_latch_e[b].reset()
-                    self.or_accum_e[b].reset()
-                    bit_val = self.and_latch_e[b](current_exp_bits[..., b:b+1], first_spike)
-                    e_reg[..., b:b+1] = self.or_accum_e[b](e_reg[..., b:b+1], bit_val)
+                # 向量化：所有指数位同时处理
+                self.vec_and_latch_e.reset()
+                self.vec_or_accum_e.reset()
+                # first_spike: [n_samples, 1] -> 广播到 [n_samples, E_bits]
+                first_spike_expanded = first_spike.expand_as(current_exp_bits)
+                bit_val = self.vec_and_latch_e(current_exp_bits, first_spike_expanded)
+                e_reg = self.vec_or_accum_e(e_reg, bit_val)
             
             # --- E. 尾数采样 (Normal) ---
             # 移位延迟线：fs -> d0 -> d1 -> d2
@@ -230,12 +235,15 @@ class PulseFloatingPointEncoder(nn.Module):
                 prev_signal = out
             
             # 采样：M[i] = s AND delayed_fs[i]
-            # 使用纯 SNN 门电路
-            for i in range(self.M_bits):
-                self.and_sample_m[i].reset()
-                self.or_accum_m[i].reset()
-                sampled = self.and_sample_m[i](s, current_delayed_fs[i])
-                m_reg[..., i:i+1] = self.or_accum_m[i](m_reg[..., i:i+1], sampled)
+            # 向量化：所有尾数位同时处理
+            self.vec_and_sample_m.reset()
+            self.vec_or_accum_m.reset()
+            # 堆叠延迟信号 [n_samples, M_bits]
+            delayed_fs_stacked = torch.cat(current_delayed_fs, dim=-1)
+            # s: [n_samples, 1] -> 广播到 [n_samples, M_bits]
+            s_expanded = s.expand_as(delayed_fs_stacked)
+            sampled = self.vec_and_sample_m(s_expanded, delayed_fs_stacked)
+            m_reg = self.vec_or_accum_m(m_reg, sampled)
             
             # --- F. 尾数采样 (Subnormal) ---
             # 如果是 subnormal 区域 (t >= 16)，直接采集脉冲

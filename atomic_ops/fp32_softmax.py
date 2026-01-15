@@ -40,30 +40,24 @@ class SpikeFP32Softmax(nn.Module):
         Returns: Softmax(x) [..., N, 32] FP32脉冲
         """
         self.reset()
-        device = x.device
-        
+
         # x的形状: [..., N, 32]
-        batch_shape = x.shape[:-2]
         N = x.shape[-2]
-        
-        # Step 1: 计算 exp(x_i) for all i
+
+        # Step 1: 计算 exp(x_i) for all i (向量化)
         exp_x = self.exp(x)  # [..., N, 32]
-        
-        # Step 2: 计算 sum(exp(x_j))
+
+        # Step 2: 计算 sum(exp(x_j)) - 累加有依赖，需要循环
         sum_exp = exp_x[..., 0, :]  # [..., 32]
         for i in range(1, N):
             self.adder.reset()
             sum_exp = self.adder(sum_exp, exp_x[..., i, :])
-        
-        # Step 3: exp(x_i) / sum(exp(x_j)) for each i
-        result = []
-        for i in range(N):
-            self.divider.reset()
-            softmax_i = self.divider(exp_x[..., i, :], sum_exp)
-            result.append(softmax_i.unsqueeze(-2))
-        
-        result = torch.cat(result, dim=-2)  # [..., N, 32]
-        
+
+        # Step 3: exp(x_i) / sum(exp(x_j)) for all i (向量化)
+        # 广播 sum_exp 到 [..., N, 32]，一次性完成所有除法
+        sum_exp_expanded = sum_exp.unsqueeze(-2).expand_as(exp_x)
+        result = self.divider(exp_x, sum_exp_expanded)  # [..., N, 32]
+
         return result
     
     def reset(self):

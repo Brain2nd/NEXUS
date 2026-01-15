@@ -270,73 +270,73 @@ class SpikeFP8Multiplier(nn.Module):
         self.mux_sub_m2 = MUXGate(neuron_template=nt)
         
         # ===== 最终结果选择MUX =====
-        self.mux_final_e0 = MUXGate()
-        self.mux_final_e1 = MUXGate()
-        self.mux_final_e2 = MUXGate()
-        self.mux_final_e3 = MUXGate()
-        self.mux_final_m0 = MUXGate()
-        self.mux_final_m1 = MUXGate()
-        self.mux_final_m2 = MUXGate()
-        
+        self.mux_final_e0 = MUXGate(neuron_template=nt)
+        self.mux_final_e1 = MUXGate(neuron_template=nt)
+        self.mux_final_e2 = MUXGate(neuron_template=nt)
+        self.mux_final_e3 = MUXGate(neuron_template=nt)
+        self.mux_final_m0 = MUXGate(neuron_template=nt)
+        self.mux_final_m1 = MUXGate(neuron_template=nt)
+        self.mux_final_m2 = MUXGate(neuron_template=nt)
+
         # ===== 上溢检测 (sum_e >= 22，即 raw_e >= 15) =====
-        # sum_e >= 22 = 10110: 
-        # (sum_e[4]=1 且 sum_e[3]=1) 或 
+        # sum_e >= 22 = 10110:
+        # (sum_e[4]=1 且 sum_e[3]=1) 或
         # (sum_e[4]=1 且 sum_e[3]=0 且 sum_e[2]=1 且 sum_e[1]=1)
-        self.overflow_43 = ANDGate()  # sum_e[4] AND sum_e[3]
-        self.overflow_not_3 = NOTGate()  # NOT(sum_e[3])
-        self.overflow_21 = ANDGate()  # sum_e[2] AND sum_e[1]
-        self.overflow_210 = ANDGate()  # (sum_e[2] AND sum_e[1]) AND sum_e[0]
-        self.overflow_4n321 = ANDGate()  # sum_e[4] AND NOT(sum_e[3])
-        self.overflow_4n321_21 = ANDGate()  # above AND (sum_e[2] AND sum_e[1])
-        self.overflow_final = ORGate()  # 43 OR 4n321_21
-        self.overflow_and_msb = ANDGate()  # sum_e>=22 AND e_final[4]
-        
+        self.overflow_43 = ANDGate(neuron_template=nt)  # sum_e[4] AND sum_e[3]
+        self.overflow_not_3 = NOTGate(neuron_template=nt)  # NOT(sum_e[3])
+        self.overflow_21 = ANDGate(neuron_template=nt)  # sum_e[2] AND sum_e[1]
+        self.overflow_210 = ANDGate(neuron_template=nt)  # (sum_e[2] AND sum_e[1]) AND sum_e[0]
+        self.overflow_4n321 = ANDGate(neuron_template=nt)  # sum_e[4] AND NOT(sum_e[3])
+        self.overflow_4n321_21 = ANDGate(neuron_template=nt)  # above AND (sum_e[2] AND sum_e[1])
+        self.overflow_final = ORGate(neuron_template=nt)  # 43 OR 4n321_21
+        self.overflow_and_msb = ANDGate(neuron_template=nt)  # sum_e>=22 AND e_final[4]
+
         # 上溢时的 NaN 输出选择
-        self.mux_overflow_e0 = MUXGate()
-        self.mux_overflow_e1 = MUXGate()
-        self.mux_overflow_e2 = MUXGate()
-        self.mux_overflow_e3 = MUXGate()
-        self.mux_overflow_m0 = MUXGate()
-        self.mux_overflow_m1 = MUXGate()
-        self.mux_overflow_m2 = MUXGate()
-        
+        self.mux_overflow_e0 = MUXGate(neuron_template=nt)
+        self.mux_overflow_e1 = MUXGate(neuron_template=nt)
+        self.mux_overflow_e2 = MUXGate(neuron_template=nt)
+        self.mux_overflow_e3 = MUXGate(neuron_template=nt)
+        self.mux_overflow_m0 = MUXGate(neuron_template=nt)
+        self.mux_overflow_m1 = MUXGate(neuron_template=nt)
+        self.mux_overflow_m2 = MUXGate(neuron_template=nt)
+
         # ===== 输入为零时清零 (纯SNN AND with NOT) =====
-        self.zero_not = NOTGate()  # NOT(input_has_zero)
-        self.zero_and_e0 = ANDGate()
-        self.zero_and_e1 = ANDGate()
-        self.zero_and_e2 = ANDGate()
-        self.zero_and_e3 = ANDGate()
-        self.zero_and_m0 = ANDGate()
-        self.zero_and_m1 = ANDGate()
-        self.zero_and_m2 = ANDGate()
-        
+        self.zero_not = NOTGate(neuron_template=nt)  # NOT(input_has_zero)
+        self.zero_and_e0 = ANDGate(neuron_template=nt)
+        self.zero_and_e1 = ANDGate(neuron_template=nt)
+        self.zero_and_e2 = ANDGate(neuron_template=nt)
+        self.zero_and_e3 = ANDGate(neuron_template=nt)
+        self.zero_and_m0 = ANDGate(neuron_template=nt)
+        self.zero_and_m1 = ANDGate(neuron_template=nt)
+        self.zero_and_m2 = ANDGate(neuron_template=nt)
+
         # ===== sticky_extra 用途修正 =====
         # Pre-shift 总是把 P[0] 移到 sticky_extra，但 P[0] 的正确角色取决于 shift_amt：
         # - shift = 0-2: P[0] 是 sticky
         # - shift = 3: P[0] 是 round_bit
         # - shift >= 4: P[0] 是 m2
-        
+
         # shift >= 4 修正 (m2)
-        self.shift_ge4_and = ANDGate()  # shift_amt[2] AND sticky_extra
-        self.m2_raw_fix_or = ORGate()  # p_norm[3] OR (shift_ge4 AND sticky_extra)
-        self.shift_lt4_not = NOTGate()  # NOT(shift_amt[2])
-        
+        self.shift_ge4_and = ANDGate(neuron_template=nt)  # shift_amt[2] AND sticky_extra
+        self.m2_raw_fix_or = ORGate(neuron_template=nt)  # p_norm[3] OR (shift_ge4 AND sticky_extra)
+        self.shift_lt4_not = NOTGate(neuron_template=nt)  # NOT(shift_amt[2])
+
         # shift = 3 修正 (round_bit)
         # shift = 3: shift_amt = 011, 即 NOT(shift_amt[2]) AND shift_amt[1] AND shift_amt[0]
-        self.shift_eq3_and_10 = ANDGate()  # shift_amt[1] AND shift_amt[0]
-        self.shift_eq3_and = ANDGate()  # (NOT shift_amt[2]) AND (shift_amt[1] AND shift_amt[0])
-        self.shift_eq3_sticky = ANDGate()  # shift_eq3 AND sticky_extra
-        self.round_bit_fix_or = ORGate()  # round_bit OR (shift_eq3 AND sticky_extra)
-        
+        self.shift_eq3_and_10 = ANDGate(neuron_template=nt)  # shift_amt[1] AND shift_amt[0]
+        self.shift_eq3_and = ANDGate(neuron_template=nt)  # (NOT shift_amt[2]) AND (shift_amt[1] AND shift_amt[0])
+        self.shift_eq3_sticky = ANDGate(neuron_template=nt)  # shift_eq3 AND sticky_extra
+        self.round_bit_fix_or = ORGate(neuron_template=nt)  # round_bit OR (shift_eq3 AND sticky_extra)
+
         # sticky 修正：只有 shift <= 2 时才包含 sticky_extra
         # shift <= 2: NOT(shift_amt[2]) AND NOT(shift_amt[1] AND shift_amt[0])
         # 简化：NOT(shift >= 3) = NOT(shift_amt[2] OR (shift_amt[1] AND shift_amt[0]))
-        self.shift_ge3_or = ORGate()  # shift_amt[2] OR (shift_amt[1] AND shift_amt[0])
-        self.shift_lt3_not = NOTGate()  # NOT(shift >= 3)
-        self.sticky_extra_masked = ANDGate()  # sticky_extra AND (shift < 3)
-        
-        self.sub_sticky_base = ORGate()  # round_bit OR (p1 OR p0)
-        self.sub_sticky_final = ORGate()  # base OR masked_sticky_extra
+        self.shift_ge3_or = ORGate(neuron_template=nt)  # shift_amt[2] OR (shift_amt[1] AND shift_amt[0])
+        self.shift_lt3_not = NOTGate(neuron_template=nt)  # NOT(shift >= 3)
+        self.sticky_extra_masked = ANDGate(neuron_template=nt)  # sticky_extra AND (shift < 3)
+
+        self.sub_sticky_base = ORGate(neuron_template=nt)  # round_bit OR (p1 OR p0)
+        self.sub_sticky_final = ORGate(neuron_template=nt)  # base OR masked_sticky_extra
         
     def forward(self, A, B):
         # A, B: [..., 8] = S(1) E(4) M(3)

@@ -122,29 +122,30 @@ class SpikeFP64SqrtGuess(nn.Module):
 # ==============================================================================
 class SpikeFP64Sqrt(nn.Module):
     """FP64 Square Root - Newton-Raphson Iteration (向量化版本)
-    
+
     y_{n+1} = 0.5 * (y_n + x / y_n)
-    
+
     使用 12 次迭代确保 FP64 精度。
     """
-    def __init__(self, iterations=12):
+    def __init__(self, iterations=12, neuron_template=None):
         super().__init__()
         self.iterations = iterations
-        
-        self.guess = SpikeFP64SqrtGuess()
-        
+        nt = neuron_template
+
+        self.guess = SpikeFP64SqrtGuess(neuron_template=nt)
+
         # 迭代所需的运算单元 (已经向量化)
-        self.divs = nn.ModuleList([SpikeFP64Divider() for _ in range(iterations)])
-        self.adds = nn.ModuleList([SpikeFP64Adder() for _ in range(iterations)])
-        self.muls = nn.ModuleList([SpikeFP64Multiplier() for _ in range(iterations)])
-        
+        self.divs = nn.ModuleList([SpikeFP64Divider(neuron_template=nt) for _ in range(iterations)])
+        self.adds = nn.ModuleList([SpikeFP64Adder(neuron_template=nt) for _ in range(iterations)])
+        self.muls = nn.ModuleList([SpikeFP64Multiplier(neuron_template=nt) for _ in range(iterations)])
+
         # 向量化门电路
-        self.vec_and = VecAND()
-        self.vec_or = VecOR()
-        self.vec_not = VecNOT()
-        self.vec_mux = VecMUX()
-        self.vec_and_tree = VecANDTree()
-        self.vec_or_tree = VecORTree()
+        self.vec_and = VecAND(neuron_template=nt)
+        self.vec_or = VecOR(neuron_template=nt)
+        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_and_tree = VecANDTree(neuron_template=nt)
+        self.vec_or_tree = VecORTree(neuron_template=nt)
         
     def forward(self, x):
         self.reset()

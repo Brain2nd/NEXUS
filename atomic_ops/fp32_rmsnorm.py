@@ -33,29 +33,30 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
         normalized_shape: 输入特征维度 (int)
         eps: epsilon (default: 1e-6)
     """
-    def __init__(self, normalized_shape, eps=1e-6):
+    def __init__(self, normalized_shape, eps=1e-6, neuron_template=None):
         super().__init__()
         if isinstance(normalized_shape, int):
             self.dim = normalized_shape
         else:
             self.dim = normalized_shape[0]
-            
+
         self.eps = eps
-        
-        self.to_fp64 = FP32ToFP64Converter()
-        self.to_fp32 = FP64ToFP32Converter()
-        
-        self.mul_sq = SpikeFP64Multiplier() 
-        
+        nt = neuron_template
+
+        self.to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.to_fp32 = FP64ToFP32Converter(neuron_template=nt)
+
+        self.mul_sq = SpikeFP64Multiplier(neuron_template=nt)
+
         # Reduction Tree Adders: Need dim-1 adders
-        self.adders_tree = nn.ModuleList([SpikeFP64Adder() for _ in range(self.dim - 1)])
-        
-        self.div_mean = SpikeFP64Divider()
-        self.adder_eps = SpikeFP64Adder()
-        self.sqrt = SpikeFP64Sqrt(iterations=12)  # 12次迭代确保最高精度
-        self.div_inv = SpikeFP64Divider()
-        self.mul_scale = SpikeFP64Multiplier()
-        self.mul_w = SpikeFP64Multiplier()
+        self.adders_tree = nn.ModuleList([SpikeFP64Adder(neuron_template=nt) for _ in range(self.dim - 1)])
+
+        self.div_mean = SpikeFP64Divider(neuron_template=nt)
+        self.adder_eps = SpikeFP64Adder(neuron_template=nt)
+        self.sqrt = SpikeFP64Sqrt(iterations=12, neuron_template=nt)  # 12次迭代确保最高精度
+        self.div_inv = SpikeFP64Divider(neuron_template=nt)
+        self.mul_scale = SpikeFP64Multiplier(neuron_template=nt)
+        self.mul_w = SpikeFP64Multiplier(neuron_template=nt)
         
         self.weight = nn.Parameter(torch.ones(self.dim))
 

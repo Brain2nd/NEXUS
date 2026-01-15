@@ -45,17 +45,18 @@ class SpikeFP32LayerNorm(nn.Module):
     注意: 由于sqrt需要特殊处理，此实现使用RMS近似:
           LayerNorm ≈ (x - mean) / RMS(x - mean)
     """
-    def __init__(self, eps=1e-6):
+    def __init__(self, eps=1e-6, neuron_template=None):
         super().__init__()
         self.eps = eps
-        
-        self.fp32_to_fp64 = FP32ToFP64Converter()
-        self.fp64_adder = SpikeFP64Adder()
-        self.fp64_mul = SpikeFP64Multiplier()
-        self.fp64_divider = SpikeFP64Divider()
-        self.fp64_to_fp32 = FP64ToFP32Converter()
-        
-        self.sign_not = NOTGate()
+        nt = neuron_template
+
+        self.fp32_to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
+        self.fp64_mul = SpikeFP64Multiplier(neuron_template=nt)
+        self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
+        self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
+
+        self.sign_not = NOTGate(neuron_template=nt)
         
     def forward(self, x):
         """

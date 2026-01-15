@@ -85,18 +85,18 @@ class SpikeFP64Floor(nn.Module):
         self.mant_clear_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(52)])
         self.mant_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(52)])
         
-        # 小数检测
-        self.frac_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(52)])
-        self.frac_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(51)])
-        
+        # 向量化小数检测
+        self.frac_and = VecAND(neuron_template=nt)
+        self.frac_or_tree = VecORTree(neuron_template=nt)
+
         # 负数处理 (floor = trunc - 1)
-        self.neg_frac_and = ANDGate(neuron_template=nt)
+        self.neg_frac_and = VecAND(neuron_template=nt)
         self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
-        
-        # 结果选择
-        self.lt_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
-        self.ge_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
-        self.neg_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
+
+        # 向量化结果选择
+        self.lt_mux = VecMUX(neuron_template=nt)
+        self.ge_mux = VecMUX(neuron_template=nt)
+        self.neg_mux = VecMUX(neuron_template=nt)
         
     def forward(self, x):
         self.reset()
@@ -172,52 +172,34 @@ class SpikeFP64Floor(nn.Module):
         
         cleared_mant = torch.cat(cleared_mant, dim=-1)
         
-        # 4. 检测是否有非零小数
-        frac_and_vals = []
-        for i in range(52):
-            frac_and_val = self.frac_and[i](frac_bits[i], m_x[..., i:i+1])
-            frac_and_vals.append(frac_and_val)
-        
-        has_frac = frac_and_vals[0]
-        for i in range(1, 52):
-            has_frac = self.frac_or[i-1](has_frac, frac_and_vals[i])
-        
+        # 4. 检测是否有非零小数 (向量化)
+        frac_bits_tensor = torch.cat(frac_bits, dim=-1)  # [..., 52]
+        frac_and_result = self.frac_and(frac_bits_tensor, m_x)  # [..., 52]
+        has_frac = self.frac_or_tree(frac_and_result)  # [..., 1]
+
         trunc_result = torch.cat([s_x, e_x, cleared_mant], dim=-1)
-        
-        # 5. 负数有小数时: floor = trunc - 1
+
+        # 5. 负数有小数时: floor = trunc - 1 (向量化)
         neg_one = make_fp64_constant(-1.0, batch_shape, device)
         trunc_minus_one = self.fp64_adder(trunc_result, neg_one)
-        
+
         neg_has_frac = self.neg_frac_and(s_x, has_frac)
-        
-        result_bits = []
-        for i in range(64):
-            bit = self.neg_mux[i](neg_has_frac, trunc_minus_one[..., i:i+1], trunc_result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        # 6. E < 1023: 返回0或-1
+        neg_has_frac_64 = neg_has_frac.expand_as(trunc_result)
+        result = self.neg_mux(neg_has_frac_64, trunc_minus_one, trunc_result)
+
+        # 6. E < 1023: 返回0或-1 (向量化)
         zero_val = make_fp64_constant(0.0, batch_shape, device)
         neg_one_val = make_fp64_constant(-1.0, batch_shape, device)
-        
-        lt_result = []
-        for i in range(64):
-            bit = self.lt_mux[i](s_x, neg_one_val[..., i:i+1], zero_val[..., i:i+1])
-            lt_result.append(bit)
-        lt_result = torch.cat(lt_result, dim=-1)
-        
-        result_bits = []
-        for i in range(64):
-            bit = self.lt_mux[i](e_lt_1023, lt_result[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        # 7. E >= 1075: 返回原值
-        result_bits = []
-        for i in range(64):
-            bit = self.ge_mux[i](e_ge_1075, x[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
+
+        s_x_64 = s_x.expand_as(zero_val)
+        lt_result = self.lt_mux(s_x_64, neg_one_val, zero_val)
+
+        e_lt_1023_64 = e_lt_1023.expand_as(result)
+        result = self.lt_mux(e_lt_1023_64, lt_result, result)
+
+        # 7. E >= 1075: 返回原值 (向量化)
+        e_ge_1075_64 = e_ge_1075.expand_as(x)
+        result = self.ge_mux(e_ge_1075_64, x, result)
         
         return result
     
@@ -230,13 +212,13 @@ class SpikeFP64Floor(nn.Module):
             for g in cmp_list: g.reset()
         for g in self.mant_clear_not: g.reset()
         for g in self.mant_mux: g.reset()
-        for g in self.frac_and: g.reset()
-        for g in self.frac_or: g.reset()
+        self.frac_and.reset()
+        self.frac_or_tree.reset()
         self.neg_frac_and.reset()
         self.fp64_adder.reset()
-        for g in self.lt_mux: g.reset()
-        for g in self.ge_mux: g.reset()
-        for g in self.neg_mux: g.reset()
+        self.lt_mux.reset()
+        self.ge_mux.reset()
+        self.neg_mux.reset()
 
 
 # ==============================================================================
@@ -244,33 +226,33 @@ class SpikeFP64Floor(nn.Module):
 # ==============================================================================
 class SpikeFP64ScaleBy2K(nn.Module):
     """FP64 乘以 2^k - 直接修改指数
-    
+
     k是一个FP64整数，需要正确提取其整数值然后加到x的指数上。
     """
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
+
         # E - 1023
         self.exp_sub_bias = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
         self.exp_not_bias = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
-        
-        # Barrel Shifter Right (提取k的整数值, 需要6层处理最多64位移动)
-        self.shift_layers = nn.ModuleList([nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16)]) for _ in range(6)])
-        self.shift_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(6)])
-        
-        # 符号处理
+
+        # Barrel Shifter Right (向量化: 4层VecMUX，每层处理16位)
+        self.shift_mux = nn.ModuleList([VecMUX(neuron_template=nt) for _ in range(4)])
+        self.shift_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(4)])
+
+        # 符号处理 (向量化)
         self.neg_not = nn.ModuleList([NOTGate(neuron_template=nt) for _ in range(11)])
         self.neg_add = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
-        self.sign_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(11)])
-        
+        self.sign_mux = VecMUX(neuron_template=nt)
+
         # 指数相加
         self.exp_add = nn.ModuleList([FullAdder(neuron_template=nt) for _ in range(11)])
-        
-        # k=0检测
-        self.k_zero_or = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(63)])
+
+        # k=0检测 (向量化)
+        self.k_zero_or = VecORTree(neuron_template=nt)
         self.k_zero_not = NOTGate(neuron_template=nt)
-        self.zero_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
+        self.zero_mux = VecMUX(neuron_template=nt)
         
     def forward(self, x, k):
         self.reset()
@@ -306,23 +288,19 @@ class SpikeFP64ScaleBy2K(nn.Module):
         # 2. 构造完整的值: 1.m_k (16位: 隐藏位 + 15位尾数高位)
         val = torch.cat([ones, m_k[..., 0:15]], dim=-1)  # 16位, MSB first
         
-        # 右移 (15 - shift) 位
-        s_bar = []
-        for i in range(4):
-            s_bar.append(self.shift_not[i](shift[..., i:i+1]))
-        
+        # 右移 (15 - shift) 位 (向量化)
         current = val.flip(-1)  # 转LSB first方便处理
+        zeros_16 = torch.zeros(batch_shape + (16,), device=device)
         for layer in range(4):
             shift_amt = 1 << layer
-            next_val = []
-            for i in range(16):
-                if i + shift_amt < 16:
-                    shifted = current[..., i + shift_amt:i + shift_amt + 1]
-                else:
-                    shifted = zeros
-                bit = self.shift_layers[layer][i](s_bar[layer], shifted, current[..., i:i+1])
-                next_val.append(bit)
-            current = torch.cat(next_val, dim=-1)
+            s_bar = self.shift_not[layer](shift[..., layer:layer+1])
+            s_bar_16 = s_bar.expand(batch_shape + (16,))
+            # 构造 shifted 版本
+            if shift_amt < 16:
+                shifted = torch.cat([current[..., shift_amt:], zeros_16[..., :shift_amt]], dim=-1)
+            else:
+                shifted = zeros_16
+            current = self.shift_mux[layer](s_bar_16, shifted, current)
         
         # 取低11位作为k的整数值
         k_abs_le = current[..., :11]  # LSB first
@@ -341,11 +319,9 @@ class SpikeFP64ScaleBy2K(nn.Module):
             carry = c
         neg_k = torch.cat(neg_k, dim=-1)
         
-        k_final = []
-        for i in range(11):
-            bit = self.sign_mux[i](s_k, neg_k[..., i:i+1], k_abs_le[..., i:i+1])
-            k_final.append(bit)
-        k_final = torch.cat(k_final, dim=-1)
+        # 符号选择 (向量化)
+        s_k_11 = s_k.expand(batch_shape + (11,))
+        k_final = self.sign_mux(s_k_11, neg_k, k_abs_le)
         
         # 4. 指数相加: E_new = E_x + k
         e_x_le = e_x.flip(-1)
@@ -357,60 +333,50 @@ class SpikeFP64ScaleBy2K(nn.Module):
             carry = c
         e_new = torch.cat(e_new, dim=-1).flip(-1)  # 转回MSB first
         
-        # 5. k=0检测 (所有非符号位都是0)
-        k_any = k[..., 1:2]
-        for i in range(2, 64):
-            k_any = self.k_zero_or[i-2](k_any, k[..., i:i+1])
+        # 5. k=0检测 (向量化: 所有非符号位都是0)
+        k_any = self.k_zero_or(k[..., 1:])  # [..., 63] -> [..., 1]
         k_is_zero = self.k_zero_not(k_any)
-        
+
         result_scaled = torch.cat([s_x, e_new, m_x], dim=-1)
-        
-        final_bits = []
-        for i in range(64):
-            bit = self.zero_mux[i](k_is_zero, x[..., i:i+1], result_scaled[..., i:i+1])
-            final_bits.append(bit)
-        
-        return torch.cat(final_bits, dim=-1)
+
+        # 向量化结果选择
+        k_is_zero_64 = k_is_zero.expand_as(x)
+        return self.zero_mux(k_is_zero_64, x, result_scaled)
     
     def reset(self):
         for g in self.exp_sub_bias: g.reset()
         for g in self.exp_not_bias: g.reset()
-        for layer in self.shift_layers:
-            for g in layer: g.reset()
+        for g in self.shift_mux: g.reset()
         for g in self.shift_not: g.reset()
         for g in self.neg_not: g.reset()
         for g in self.neg_add: g.reset()
-        for g in self.sign_mux: g.reset()
+        self.sign_mux.reset()
         for g in self.exp_add: g.reset()
-        for g in self.k_zero_or: g.reset()
+        self.k_zero_or.reset()
         self.k_zero_not.reset()
-        for g in self.zero_mux: g.reset()
+        self.zero_mux.reset()
 
 
 # ==============================================================================
 # FP64 查表 (64项)
 # ==============================================================================
 class SpikeFP64LookupExp2(nn.Module):
-    """查表模块: T[j] = 2^(j/64), 64项"""
+    """查表模块: T[j] = 2^(j/64), 64项 (向量化版本)"""
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
+
         # 预计算64项查表值 (FP64精度)
         self.table_values = []
         for j in range(64):
             val = 2.0 ** (j / 64.0)
             self.table_values.append(float64_to_bits(val))
-        
-        # 6层 MUX 树 (2^6 = 64)
-        self.mux_l0 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(32 * 64)])
-        self.mux_l1 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16 * 64)])
-        self.mux_l2 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(8 * 64)])
-        self.mux_l3 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4 * 64)])
-        self.mux_l4 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(2 * 64)])
-        self.mux_l5 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(64)])
-        
+
+        # 向量化 MUX - 每层一个 VecMUX 处理所有 64 位
+        self.vec_mux = VecMUX(neuron_template=nt)
+
     def _make_constant(self, bits_val, batch_shape, device):
+        """预计算常量位模式"""
         pulse = torch.zeros(batch_shape + (64,), device=device)
         for i in range(64):
             pulse[..., i] = float((bits_val >> (63 - i)) & 1)
@@ -421,84 +387,49 @@ class SpikeFP64LookupExp2(nn.Module):
         self.reset()
         batch_shape = idx_bits.shape[:-1]
         device = idx_bits.device
-        
+
         consts = [self._make_constant(h, batch_shape, device) for h in self.table_values]
-        
+
         b5, b4, b3, b2, b1, b0 = [idx_bits[..., i:i+1] for i in range(6)]
-        
-        # Layer 0 (b5): 64 -> 32
+
+        # Layer 0 (b5): 64 -> 32 (向量化)
+        b5_exp = b5.expand(batch_shape + (64,))
         out_l0 = []
         for i in range(32):
-            val_bits = []
-            A = consts[i]
-            B = consts[i + 32]
-            for bit in range(64):
-                gate_idx = i * 64 + bit
-                v = self.mux_l0[gate_idx](b5, B[..., bit:bit+1], A[..., bit:bit+1])
-                val_bits.append(v)
-            out_l0.append(torch.cat(val_bits, dim=-1))
-        
-        # Layer 1 (b4): 32 -> 16
+            out_l0.append(self.vec_mux(b5_exp, consts[i + 32], consts[i]))
+
+        # Layer 1 (b4): 32 -> 16 (向量化)
+        b4_exp = b4.expand(batch_shape + (64,))
         out_l1 = []
         for i in range(16):
-            val_bits = []
-            A = out_l0[i]
-            B = out_l0[i + 16]
-            for bit in range(64):
-                gate_idx = i * 64 + bit
-                v = self.mux_l1[gate_idx](b4, B[..., bit:bit+1], A[..., bit:bit+1])
-                val_bits.append(v)
-            out_l1.append(torch.cat(val_bits, dim=-1))
-        
-        # Layer 2 (b3): 16 -> 8
+            out_l1.append(self.vec_mux(b4_exp, out_l0[i + 16], out_l0[i]))
+
+        # Layer 2 (b3): 16 -> 8 (向量化)
+        b3_exp = b3.expand(batch_shape + (64,))
         out_l2 = []
         for i in range(8):
-            val_bits = []
-            A = out_l1[i]
-            B = out_l1[i + 8]
-            for bit in range(64):
-                gate_idx = i * 64 + bit
-                v = self.mux_l2[gate_idx](b3, B[..., bit:bit+1], A[..., bit:bit+1])
-                val_bits.append(v)
-            out_l2.append(torch.cat(val_bits, dim=-1))
-        
-        # Layer 3 (b2): 8 -> 4
+            out_l2.append(self.vec_mux(b3_exp, out_l1[i + 8], out_l1[i]))
+
+        # Layer 3 (b2): 8 -> 4 (向量化)
+        b2_exp = b2.expand(batch_shape + (64,))
         out_l3 = []
         for i in range(4):
-            val_bits = []
-            A = out_l2[i]
-            B = out_l2[i + 4]
-            for bit in range(64):
-                gate_idx = i * 64 + bit
-                v = self.mux_l3[gate_idx](b2, B[..., bit:bit+1], A[..., bit:bit+1])
-                val_bits.append(v)
-            out_l3.append(torch.cat(val_bits, dim=-1))
-        
-        # Layer 4 (b1): 4 -> 2
+            out_l3.append(self.vec_mux(b2_exp, out_l2[i + 4], out_l2[i]))
+
+        # Layer 4 (b1): 4 -> 2 (向量化)
+        b1_exp = b1.expand(batch_shape + (64,))
         out_l4 = []
         for i in range(2):
-            val_bits = []
-            A = out_l3[i]
-            B = out_l3[i + 2]
-            for bit in range(64):
-                gate_idx = i * 64 + bit
-                v = self.mux_l4[gate_idx](b1, B[..., bit:bit+1], A[..., bit:bit+1])
-                val_bits.append(v)
-            out_l4.append(torch.cat(val_bits, dim=-1))
-        
-        # Layer 5 (b0): 2 -> 1
-        val_bits = []
-        A = out_l4[0]
-        B = out_l4[1]
-        for bit in range(64):
-            v = self.mux_l5[bit](b0, B[..., bit:bit+1], A[..., bit:bit+1])
-            val_bits.append(v)
-        
-        return torch.cat(val_bits, dim=-1)
+            out_l4.append(self.vec_mux(b1_exp, out_l3[i + 2], out_l3[i]))
+
+        # Layer 5 (b0): 2 -> 1 (向量化)
+        b0_exp = b0.expand(batch_shape + (64,))
+        result = self.vec_mux(b0_exp, out_l4[1], out_l4[0])
+
+        return result
 
     def reset(self):
-        for l in [self.mux_l0, self.mux_l1, self.mux_l2, self.mux_l3, self.mux_l4, self.mux_l5]:
-            for g in l: g.reset()
+        self.vec_mux.reset()
 
 
 # ==============================================================================
@@ -971,34 +902,29 @@ class SpikeFP32SoftmaxFullFP64(nn.Module):
         输出: [..., N, 32] FP32脉冲
         """
         self.reset()
-        
-        batch_shape = x.shape[:-2]
+
         N = x.shape[-2]
-        
-        # FP32 -> FP64
+
+        # FP32 -> FP64 (向量化)
         x_fp64 = self.fp32_to_fp64(x)  # [..., N, 64]
-        
-        # exp(x_i) for all i
+
+        # exp(x_i) for all i (向量化)
         exp_x = self.fp64_exp(x_fp64)  # [..., N, 64]
-        
-        # sum(exp(x_j))
+
+        # sum(exp(x_j)) - 累加有依赖，需要循环
         sum_exp = exp_x[..., 0, :]  # [..., 64]
         for i in range(1, N):
             self.fp64_adder.reset()
             sum_exp = self.fp64_adder(sum_exp, exp_x[..., i, :])
-        
-        # exp(x_i) / sum for each i
-        result_fp64 = []
-        for i in range(N):
-            self.fp64_divider.reset()
-            softmax_i = self.fp64_divider(exp_x[..., i, :], sum_exp)
-            result_fp64.append(softmax_i.unsqueeze(-2))
-        
-        result_fp64 = torch.cat(result_fp64, dim=-2)  # [..., N, 64]
-        
-        # FP64 -> FP32
+
+        # exp(x_i) / sum for all i (向量化)
+        # 广播 sum_exp 到 [..., N, 64]，一次性完成所有除法
+        sum_exp_expanded = sum_exp.unsqueeze(-2).expand_as(exp_x)
+        result_fp64 = self.fp64_divider(exp_x, sum_exp_expanded)  # [..., N, 64]
+
+        # FP64 -> FP32 (向量化)
         result_fp32 = self.fp64_to_fp32(result_fp64)  # [..., N, 32]
-        
+
         return result_fp32
     
     def reset(self):

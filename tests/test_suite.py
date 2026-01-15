@@ -302,26 +302,28 @@ def test_fp8_multiplier() -> TestResult:
 
 def test_linear_alignment() -> TestResult:
     """测试 Linear 层精度对齐
-    
+
     使用框架的解码器将脉冲转为浮点数，与 PyTorch 参考值比较。
-    
+
     测试原则：
     1. 多轮随机测试（不同种子）
     2. 边界值测试（0, 极大值, 极小值, 正负混合）
     3. 不同规模测试（小矩阵、中矩阵）
-    
+
     对齐原则：
     - PyTorch 内部用 FP32 累加
-    FP8 Linear 层测试 - 不同中间累加精度，输入输出都是 FP8
-    - FP32 累加：FP32累加 → FP8输出
-    - FP16 累加：FP16累加 → FP8输出
-    - FP8 累加：FP8累加 → FP8输出
+    FP8 Linear 层测试 - 不同累加精度，输出精度与累加精度一致
+    - FP32 累加：FP32累加 → FP32输出[32位]
+    - FP16 累加：FP32累加 → FP16输出[16位]
+    - FP8 累加：FP8累加 → FP8输出[8位]
     """
     result = TestResult("Linear层对齐测试")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     encoder = PulseFloatingPointEncoder().to(device)
-    decoder_fp8 = PulseFloatingPointDecoder().to(device)  # 所有模式都用FP8解码器
+    decoder_fp8 = PulseFloatingPointDecoder().to(device)
+    decoder_fp16 = PulseFP16Decoder().to(device)
+    decoder_fp32 = PulseFP32Decoder().to(device)
     
     # ========== 测试配置 ==========
     sizes = [
@@ -331,7 +333,7 @@ def test_linear_alignment() -> TestResult:
     ]
     random_seeds = [42, 123, 456, 789, 1024]
     
-    # ========== FP32 中间精度测试（FP32累加 → FP8输出）==========
+    # ========== FP32 累加测试（FP32累加 → FP32输出[32位]）==========
     fp32_total = 0
     fp32_match = 0
 
@@ -345,10 +347,10 @@ def test_linear_alignment() -> TestResult:
             x_fp8 = x.to(torch.float8_e4m3fn).float()
             w_fp8 = w.to(torch.float8_e4m3fn).float()
 
-            # PyTorch 参考：FP32累加 → 转回FP8
-            y_ref = (x_fp8 @ w_fp8.T).to(torch.float8_e4m3fn).float()
+            # PyTorch 参考：FP32累加（输出FP32）
+            y_ref = x_fp8 @ w_fp8.T
 
-            # SNN 计算（输出是FP8）
+            # SNN 计算（输出是FP32脉冲[32位]）
             x_pulse = encoder(x_fp8)
             linear = SpikeFP8Linear_MultiPrecision(
                 in_f, out_f, accum_precision='fp32', mode='sequential'
@@ -356,14 +358,14 @@ def test_linear_alignment() -> TestResult:
             linear.set_weight_from_float(w_fp8, encoder)
             linear.reset()
             y_pulse = linear(x_pulse)
-            y_snn = decoder_fp8(y_pulse)  # FP8解码
+            y_snn = decoder_fp32(y_pulse)  # FP32解码
 
-            # 比较浮点值（FP8精度）
-            match = torch.isclose(y_ref, y_snn, rtol=0, atol=0)
+            # 比较浮点值（FP32精度）
+            match = torch.isclose(y_ref, y_snn, rtol=1e-5, atol=1e-6) | (y_ref == y_snn)
             fp32_total += match.numel()
             fp32_match += match.sum().item()
 
-    # 边界值测试 FP32 中间精度
+    # 边界值测试 FP32 累加
     boundary_cases = [
         (torch.zeros(5, 4, device=device), "全零输入"),
         (torch.ones(5, 4, device=device) * 0.5, "全正输入"),
@@ -379,23 +381,23 @@ def test_linear_alignment() -> TestResult:
         x_fp8 = x_test.to(torch.float8_e4m3fn).float()
         w_fp8 = w.to(torch.float8_e4m3fn).float()
 
-        y_ref = (x_fp8 @ w_fp8.T).to(torch.float8_e4m3fn).float()
+        y_ref = x_fp8 @ w_fp8.T
 
         x_pulse = encoder(x_fp8)
         linear = SpikeFP8Linear_MultiPrecision(4, 2, accum_precision='fp32').to(device)
         linear.set_weight_from_float(w_fp8, encoder)
         linear.reset()
         y_pulse = linear(x_pulse)
-        y_snn = decoder_fp8(y_pulse)
+        y_snn = decoder_fp32(y_pulse)
 
-        match = torch.isclose(y_ref, y_snn, rtol=0, atol=0)
+        match = torch.isclose(y_ref, y_snn, rtol=1e-5, atol=1e-6) | (y_ref == y_snn)
         fp32_total += match.numel()
         fp32_match += match.sum().item()
 
     fp32_rate = fp32_match / fp32_total * 100
-    result.record(f"FP32中间精度({fp32_match}/{fp32_total})={fp32_rate:.1f}%", fp32_rate >= 99)
+    result.record(f"FP32累加({fp32_match}/{fp32_total})={fp32_rate:.1f}%", fp32_rate >= 99)
     
-    # ========== FP16 中间精度测试（FP16累加 → FP8输出）==========
+    # ========== FP16 累加测试（FP32累加 → FP16输出[16位]）==========
     fp16_total = 0
     fp16_match = 0
 
@@ -409,10 +411,10 @@ def test_linear_alignment() -> TestResult:
             x_fp8 = x.to(torch.float8_e4m3fn).float()
             w_fp8 = w.to(torch.float8_e4m3fn).float()
 
-            # PyTorch 参考：FP32累加 → FP16 → FP8
-            y_ref = (x_fp8 @ w_fp8.T).half().to(torch.float8_e4m3fn).float()
+            # PyTorch 参考：FP32累加 → FP16输出
+            y_ref = (x_fp8 @ w_fp8.T).half().float()
 
-            # SNN 计算（输出是FP8）
+            # SNN 计算（输出是FP16脉冲[16位]）
             x_pulse = encoder(x_fp8)
             linear = SpikeFP8Linear_MultiPrecision(
                 in_f, out_f, accum_precision='fp16', mode='sequential'
@@ -420,15 +422,15 @@ def test_linear_alignment() -> TestResult:
             linear.set_weight_from_float(w_fp8, encoder)
             linear.reset()
             y_pulse = linear(x_pulse)
-            y_snn = decoder_fp8(y_pulse)  # FP8解码
+            y_snn = decoder_fp16(y_pulse)  # FP16解码
 
-            # 比较浮点值（FP8精度）
-            match = torch.isclose(y_ref, y_snn, rtol=0, atol=0)
+            # 比较浮点值（FP16精度）
+            match = torch.isclose(y_ref, y_snn, rtol=1e-5, atol=1e-6) | (y_ref == y_snn)
             fp16_total += match.numel()
             fp16_match += match.sum().item()
 
     fp16_rate = fp16_match / fp16_total * 100
-    result.record(f"FP16中间精度({fp16_match}/{fp16_total})={fp16_rate:.1f}%", fp16_rate >= 95)
+    result.record(f"FP16累加({fp16_match}/{fp16_total})={fp16_rate:.1f}%", fp16_rate >= 95)
     
     # ========== FP8 中间精度测试（FP8累加 → FP8输出，精度最低）==========
     fp8_total = 0

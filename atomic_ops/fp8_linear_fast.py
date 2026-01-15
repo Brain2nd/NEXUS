@@ -12,7 +12,7 @@ from .fp8_adder_spatial import SpikeFP8Adder_Spatial
 
 class SpikeFP8Linear_Fast(nn.Module):
     """FP8 Linear层（使用空间编码加法器）
-    
+
     支持两种累加模式：
     - 'sequential': 顺序累加 (((p0+p1)+p2)+p3)...
                    与PyTorch matmul完全bit-exact一致
@@ -20,25 +20,26 @@ class SpikeFP8Linear_Fast(nn.Module):
     - 'tree':      树形累加 ((p0+p1)+(p2+p3))...
                    低延迟但与PyTorch有微小差异（FP8非结合性）
                    延迟: O(log N)
-    
+
     输入: x [..., in_features, 8]
     权重: w [out_features, in_features, 8]
     输出: y [..., out_features, 8]
+
+    Args:
+        in_features: 输入特征维度
+        out_features: 输出特征维度
+        mode: 'sequential' (默认，与PyTorch一致) 或 'tree' (低延迟)
+        neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
-    def __init__(self, in_features, out_features, mode='sequential'):
-        """
-        Args:
-            in_features: 输入特征维度
-            out_features: 输出特征维度
-            mode: 'sequential' (默认，与PyTorch一致) 或 'tree' (低延迟)
-        """
+    def __init__(self, in_features, out_features, mode='sequential', neuron_template=None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.mode = mode
-        
-        self.mul = SpikeFP8Multiplier()
-        
+        nt = neuron_template
+
+        self.mul = SpikeFP8Multiplier(neuron_template=nt)
+
         if mode == 'tree':
             # 树形累加：需要 log2(N) 层加法器
             self.num_add_layers = math.ceil(math.log2(in_features)) if in_features > 1 else 0
@@ -47,14 +48,14 @@ class SpikeFP8Linear_Fast(nn.Module):
             for layer in range(self.num_add_layers):
                 num_adders = (n + 1) // 2
                 self.adders.append(nn.ModuleList([
-                    SpikeFP8Adder_Spatial() for _ in range(num_adders)
+                    SpikeFP8Adder_Spatial(neuron_template=nt) for _ in range(num_adders)
                 ]))
                 n = num_adders
         else:  # sequential
             # 顺序累加：需要 N-1 个加法器
             self.num_adders = in_features - 1 if in_features > 1 else 0
             self.adders = nn.ModuleList([
-                SpikeFP8Adder_Spatial() for _ in range(self.num_adders)
+                SpikeFP8Adder_Spatial(neuron_template=nt) for _ in range(self.num_adders)
             ])
         
         self.register_buffer('weight_pulse', None)

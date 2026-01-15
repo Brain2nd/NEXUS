@@ -188,7 +188,7 @@ class SpikeFP32LookupExp2(nn.Module):
         ]
         
         # 5层 MUX 树 - 向量化 (每层使用单个 VecMUX)
-        self.vec_mux = VecMUX()
+        self.vec_mux = VecMUX(neuron_template=neuron_template)
         
     def _make_constant(self, hex_val, batch_shape, device):
         pulse = torch.zeros(batch_shape + (32,), device=device)

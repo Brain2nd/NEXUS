@@ -691,28 +691,28 @@ class FP32ToFP8Converter(nn.Module):
         
         # 尾数清零（舍入进位时）
         self.not_carry = NOTGate(neuron_template=nt)
-        self.mant_clear_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(3)])
-        
+        self.vec_mant_clear_and = VecAND(neuron_template=nt)  # 向量化：3位并行
+
         # 指数+1（舍入进位时）
         self.exp_inc = RippleCarryAdder(bits=4, neuron_template=nt)
-        
-        # 溢出/下溢/正常结果选择
-        self.overflow_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])
-        self.overflow_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(3)])
-        self.subnorm_select_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])  # for is_subnormal
-        self.underflow_mux_e = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])  # for is_underflow
-        self.underflow_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(3)])
-        
-        # 舍入后指数选择
-        self.round_exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])
+
+        # 溢出/下溢/正常结果选择 - 向量化
+        self.vec_overflow_mux_e = VecMUX(neuron_template=nt)   # 4位并行
+        self.vec_overflow_mux_m = VecMUX(neuron_template=nt)   # 3位并行
+        self.vec_subnorm_select_mux_e = VecMUX(neuron_template=nt)  # 4位并行
+        self.vec_underflow_mux_e = VecMUX(neuron_template=nt)  # 4位并行
+        self.vec_underflow_mux_m = VecMUX(neuron_template=nt)  # 3位并行
+
+        # 舍入后指数选择 - 向量化
+        self.vec_round_exp_mux = VecMUX(neuron_template=nt)    # 4位并行
         
         # Subnormal 输出处理
         # 检测 FP32_exp ∈ [118, 121): subnormal 区间
         self.subnorm_cmp_low = Comparator8Bit(neuron_template=nt)  # exp >= 118
         self.subnorm_cmp_high = Comparator8Bit(neuron_template=nt) # exp < 121
         
-        # Subnormal 尾数选择 MUX
-        self.subnorm_mux_m = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(3)])
+        # Subnormal 尾数选择 MUX - 向量化
+        self.vec_subnorm_mux_m = VecMUX(neuron_template=nt)  # 3位并行
         
         # ===== 纯 SNN 门电路替换比较运算 =====
         # Subnormal 处理的 sticky bit OR 树
@@ -757,44 +757,44 @@ class FP32ToFP8Converter(nn.Module):
         # ===== 纯 SNN AND 门 (替换 a*b) =====
         self.and_is_subnormal = ANDGate(neuron_template=nt)  # is_below_normal AND exp_ge_117
         self.and_is_underflow = ANDGate(neuron_template=nt)  # is_below_normal AND not_exp_ge_117
-        self.and_subnorm_exp_val = ANDGate()  # for subnorm_overflow selection
-        
-        # ===== 纯 SNN MUX 门 (选择 subnorm 指数) =====
-        self.subnorm_exp_mux = nn.ModuleList([MUXGate() for _ in range(4)])
-        
+        self.and_subnorm_exp_val = ANDGate(neuron_template=nt)  # for subnorm_overflow selection
+
+        # ===== 纯 SNN MUX 门 (选择 subnorm 指数) - 向量化 =====
+        self.vec_subnorm_exp_mux = VecMUX(neuron_template=nt)  # 4位并行
+
         # ===== 纯 SNN AND 门 (is_exp_117/118/119/120 计算) =====
-        self.and_exp_117_a = ANDGate()  # exp_lsb0 AND not_exp_lsb1
-        self.and_exp_117_b = ANDGate()  # (exp_lsb0 AND not_exp_lsb1) AND exp_lsb2
-        self.and_exp_118_a = ANDGate()  # not_exp_lsb0 AND exp_lsb1
-        self.and_exp_118_b = ANDGate()  # (not_exp_lsb0 AND exp_lsb1) AND exp_lsb2
-        self.and_exp_119_a = ANDGate()  # exp_lsb0 AND exp_lsb1
-        self.and_exp_119_b = ANDGate()  # (exp_lsb0 AND exp_lsb1) AND exp_lsb2
-        self.and_exp_120_a = ANDGate()  # not_exp_lsb0 AND not_exp_lsb1
-        self.and_exp_120_b = ANDGate()  # above AND not_exp_lsb2
-        self.and_exp_120_c = ANDGate()  # above AND exp_lsb3
-        
+        self.and_exp_117_a = ANDGate(neuron_template=nt)  # exp_lsb0 AND not_exp_lsb1
+        self.and_exp_117_b = ANDGate(neuron_template=nt)  # (exp_lsb0 AND not_exp_lsb1) AND exp_lsb2
+        self.and_exp_118_a = ANDGate(neuron_template=nt)  # not_exp_lsb0 AND exp_lsb1
+        self.and_exp_118_b = ANDGate(neuron_template=nt)  # (not_exp_lsb0 AND exp_lsb1) AND exp_lsb2
+        self.and_exp_119_a = ANDGate(neuron_template=nt)  # exp_lsb0 AND exp_lsb1
+        self.and_exp_119_b = ANDGate(neuron_template=nt)  # (exp_lsb0 AND exp_lsb1) AND exp_lsb2
+        self.and_exp_120_a = ANDGate(neuron_template=nt)  # not_exp_lsb0 AND not_exp_lsb1
+        self.and_exp_120_b = ANDGate(neuron_template=nt)  # above AND not_exp_lsb2
+        self.and_exp_120_c = ANDGate(neuron_template=nt)  # above AND exp_lsb3
+
         # ===== 纯 SNN AND 门 (round_up 计算) =====
-        self.and_round_up_120 = ANDGate()  # round_120 AND s_or_l_120
-        self.and_round_up_119 = ANDGate()  # round_119 AND s_or_l_119
-        self.and_round_up_118 = ANDGate()  # round_118 AND s_or_l_118
-        
+        self.and_round_up_120 = ANDGate(neuron_template=nt)  # round_120 AND s_or_l_120
+        self.and_round_up_119 = ANDGate(neuron_template=nt)  # round_119 AND s_or_l_119
+        self.and_round_up_118 = ANDGate(neuron_template=nt)  # round_118 AND s_or_l_118
+
         # ===== 纯 SNN AND 门 (subnorm_overflow 计算) =====
-        self.and_subnorm_overflow = ANDGate()  # is_exp_120 AND sub_to_normal_120
-        
+        self.and_subnorm_overflow = ANDGate(neuron_template=nt)  # is_exp_120 AND sub_to_normal_120
+
         # ===== 纯 SNN MUX 门 (subnorm_m 选择) =====
-        self.mux_subnorm_m0 = nn.ModuleList([MUXGate() for _ in range(4)])  # 4路选择器
-        self.mux_subnorm_m1 = nn.ModuleList([MUXGate() for _ in range(4)])
-        self.mux_subnorm_m2 = nn.ModuleList([MUXGate() for _ in range(4)])
-        
+        self.mux_subnorm_m0 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])  # 4路选择器
+        self.mux_subnorm_m1 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])
+        self.mux_subnorm_m2 = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(4)])
+
         # ===== AND 门用于 subnorm_m 的最终选择 =====
-        self.and_subnorm_m0 = ANDGate()
-        self.and_subnorm_m1 = ANDGate()
-        self.and_subnorm_m2 = ANDGate()
-        
+        self.and_subnorm_m0 = ANDGate(neuron_template=nt)
+        self.and_subnorm_m1 = ANDGate(neuron_template=nt)
+        self.and_subnorm_m2 = ANDGate(neuron_template=nt)
+
         # ===== 纯 SNN AND 门 (subnorm 尾数清零) =====
-        self.and_subnorm_m0 = ANDGate()
-        self.and_subnorm_m1 = ANDGate()
-        self.and_subnorm_m2 = ANDGate()
+        self.and_subnorm_m0 = ANDGate(neuron_template=nt)
+        self.and_subnorm_m1 = ANDGate(neuron_template=nt)
+        self.and_subnorm_m2 = ANDGate(neuron_template=nt)
         
     def forward(self, fp32_pulse):
         """
@@ -880,25 +880,19 @@ class FP32ToFP8Converter(nn.Module):
             mant_rounded_lsb[..., 0:1],  # m0
         ], dim=-1)
         
-        # 如果尾数进位，尾数清零
+        # 如果尾数进位，尾数清零 - 向量化
         not_carry = self.not_carry(mant_carry)
-        fp8_mant_final = torch.cat([
-            self.mant_clear_and[0](not_carry, fp8_mant[..., 0:1]),
-            self.mant_clear_and[1](not_carry, fp8_mant[..., 1:2]),
-            self.mant_clear_and[2](not_carry, fp8_mant[..., 2:3]),
-        ], dim=-1)
-        
+        not_carry_3 = not_carry.expand_as(fp8_mant)  # [..., 3]
+        fp8_mant_final = self.vec_mant_clear_and(not_carry_3, fp8_mant)  # [..., 3]
+
         # 如果尾数进位，指数+1 (LSB first)
         exp_inc_lsb = torch.cat([mant_carry, zeros, zeros, zeros], dim=-1)
         exp_after_round_lsb, _ = self.exp_inc(fp8_exp_lsb, exp_inc_lsb)
         exp_after_round = exp_after_round_lsb.flip(-1)
-        
-        # 选择最终指数
-        final_exp_pre = []
-        for i in range(4):
-            e_sel = self.round_exp_mux[i](mant_carry, exp_after_round[..., i:i+1], fp8_exp[..., i:i+1])
-            final_exp_pre.append(e_sel)
-        final_exp_pre = torch.cat(final_exp_pre, dim=-1)
+
+        # 选择最终指数 - 向量化
+        mant_carry_4 = mant_carry.expand_as(exp_after_round)  # [..., 4]
+        final_exp_pre = self.vec_round_exp_mux(mant_carry_4, exp_after_round, fp8_exp)  # [..., 4]
         
         # 溢出时设置为 NaN: E=1111, M=111
         nan_exp = torch.cat([ones, ones, ones, ones], dim=-1)
@@ -1068,25 +1062,24 @@ class FP32ToFP8Converter(nn.Module):
         # subnormal 进位时的指数应该是 E=0001 (1)
         subnorm_overflow_exp = torch.cat([zeros, zeros, zeros, ones], dim=-1)
         
-        # 选择最终结果 (使用纯SNN MUX门)
-        final_exp = []
-        for i in range(4):
-            e_ov = self.overflow_mux_e[i](is_overflow, nan_exp[..., i:i+1], final_exp_pre[..., i:i+1])
-            # Subnormal 时 E=0，但如果 subnormal 进位则 E=1 (纯SNN MUX)
-            e_subnormal_val = self.subnorm_exp_mux[i](subnorm_overflow, subnorm_overflow_exp[..., i:i+1], zero_exp[..., i:i+1])
-            e_sub = self.subnorm_select_mux_e[i](is_subnormal, e_subnormal_val, e_ov)  # 使用独立MUX
-            e_final = self.underflow_mux_e[i](is_underflow, zero_exp[..., i:i+1], e_sub)
-            final_exp.append(e_final)
-        final_exp = torch.cat(final_exp, dim=-1)
-        
-        final_mant = []
-        for i in range(3):
-            m_ov = self.overflow_mux_m[i](is_overflow, nan_mant[..., i:i+1], fp8_mant_final[..., i:i+1])
-            # Subnormal 时使用 subnorm_mant
-            m_sub = self.subnorm_mux_m[i](is_subnormal, subnorm_mant[..., i:i+1], m_ov)
-            m_final = self.underflow_mux_m[i](is_underflow, zero_mant[..., i:i+1], m_sub)
-            final_mant.append(m_final)
-        final_mant = torch.cat(final_mant, dim=-1)
+        # 选择最终结果 - 向量化（4位指数并行）
+        is_overflow_4 = is_overflow.expand_as(nan_exp)  # [..., 4]
+        e_ov = self.vec_overflow_mux_e(is_overflow_4, nan_exp, final_exp_pre)  # [..., 4]
+        # Subnormal 时 E=0，但如果 subnormal 进位则 E=1
+        subnorm_overflow_4 = subnorm_overflow.expand_as(subnorm_overflow_exp)  # [..., 4]
+        e_subnormal_val = self.vec_subnorm_exp_mux(subnorm_overflow_4, subnorm_overflow_exp, zero_exp)  # [..., 4]
+        is_subnormal_4 = is_subnormal.expand_as(e_subnormal_val)  # [..., 4]
+        e_sub = self.vec_subnorm_select_mux_e(is_subnormal_4, e_subnormal_val, e_ov)  # [..., 4]
+        is_underflow_4 = is_underflow.expand_as(zero_exp)  # [..., 4]
+        final_exp = self.vec_underflow_mux_e(is_underflow_4, zero_exp, e_sub)  # [..., 4]
+
+        # 选择最终结果 - 向量化（3位尾数并行）
+        is_overflow_3 = is_overflow.expand_as(nan_mant)  # [..., 3]
+        m_ov = self.vec_overflow_mux_m(is_overflow_3, nan_mant, fp8_mant_final)  # [..., 3]
+        is_subnormal_3 = is_subnormal.expand_as(subnorm_mant)  # [..., 3]
+        m_sub = self.vec_subnorm_mux_m(is_subnormal_3, subnorm_mant, m_ov)  # [..., 3]
+        is_underflow_3 = is_underflow.expand_as(zero_mant)  # [..., 3]
+        final_mant = self.vec_underflow_mux_m(is_underflow_3, zero_mant, m_sub)  # [..., 3]
         
         # 组装 FP8
         fp8_pulse = torch.cat([s, final_exp, final_mant], dim=-1)
@@ -1102,17 +1095,19 @@ class FP32ToFP8Converter(nn.Module):
         for g in self.sticky_or: g.reset()
         self.mant_inc.reset()
         self.not_carry.reset()
-        for g in self.mant_clear_and: g.reset()
         self.exp_inc.reset()
-        for mux in self.overflow_mux_e: mux.reset()
-        for mux in self.overflow_mux_m: mux.reset()
-        for mux in self.subnorm_select_mux_e: mux.reset()
-        for mux in self.underflow_mux_e: mux.reset()
-        for mux in self.underflow_mux_m: mux.reset()
-        for mux in self.round_exp_mux: mux.reset()
+        # 向量化门电路
+        self.vec_mant_clear_and.reset()
+        self.vec_overflow_mux_e.reset()
+        self.vec_overflow_mux_m.reset()
+        self.vec_subnorm_select_mux_e.reset()
+        self.vec_underflow_mux_e.reset()
+        self.vec_underflow_mux_m.reset()
+        self.vec_round_exp_mux.reset()
+        self.vec_subnorm_exp_mux.reset()
+        self.vec_subnorm_mux_m.reset()
         self.subnorm_cmp_low.reset()
         self.subnorm_cmp_high.reset()
-        for mux in self.subnorm_mux_m: mux.reset()
         # 纯 SNN 门电路
         for g in self.sticky_120_or: g.reset()
         for g in self.sticky_119_or: g.reset()
@@ -1203,17 +1198,17 @@ class FP32ToFP16Converter(nn.Module):
         # 尾数+1
         self.mant_inc = RippleCarryAdderNBit(bits=11, neuron_template=nt)
         self.not_carry = NOTGate(neuron_template=nt)
-        self.mant_clear_and = nn.ModuleList([ANDGate(neuron_template=nt) for _ in range(10)])
-        
+
         # 指数+1
         self.exp_inc = RippleCarryAdderNBit(bits=5, neuron_template=nt)
         
-        # 结果选择MUX
-        self.overflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16)])
-        self.underflow_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16)])
-        self.nan_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16)])
-        self.inf_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(16)])
-        self.round_exp_mux = nn.ModuleList([MUXGate(neuron_template=nt) for _ in range(5)])
+        # 结果选择MUX - 向量化
+        self.vec_overflow_mux = VecMUX(neuron_template=nt)     # 16位
+        self.vec_underflow_mux = VecMUX(neuron_template=nt)    # 16位
+        self.vec_nan_mux = VecMUX(neuron_template=nt)          # 16位
+        self.vec_inf_mux = VecMUX(neuron_template=nt)          # 16位
+        self.vec_round_exp_mux = VecMUX(neuron_template=nt)    # 5位
+        self.vec_mant_clear_and = VecAND(neuron_template=nt)   # 10位
         
     def forward(self, fp32_pulse):
         self.reset()
@@ -1274,50 +1269,36 @@ class FP32ToFP16Converter(nn.Module):
         fp16_mant = mant_rounded_lsb[..., :10].flip(-1)
         
         not_carry = self.not_carry(mant_carry)
-        fp16_mant_final = []
-        for i in range(10):
-            fp16_mant_final.append(self.mant_clear_and[i](not_carry, fp16_mant[..., i:i+1]))
-        fp16_mant_final = torch.cat(fp16_mant_final, dim=-1)
+        # 向量化: 尾数清零
+        not_carry_10 = not_carry.expand_as(fp16_mant)  # [..., 10]
+        fp16_mant_final = self.vec_mant_clear_and(not_carry_10, fp16_mant)  # [..., 10]
         
         exp_inc_lsb = torch.cat([mant_carry, zeros, zeros, zeros, zeros], dim=-1)
         exp_after_round_lsb, _ = self.exp_inc(fp16_exp_lsb, exp_inc_lsb)
         exp_after_round = exp_after_round_lsb.flip(-1)
         
-        final_exp = []
-        for i in range(5):
-            e_sel = self.round_exp_mux[i](mant_carry, exp_after_round[..., i:i+1], fp16_exp[..., i:i+1])
-            final_exp.append(e_sel)
-        final_exp = torch.cat(final_exp, dim=-1)
-        
+        # 向量化: 指数选择
+        mant_carry_5 = mant_carry.expand_as(exp_after_round)  # [..., 5]
+        final_exp = self.vec_round_exp_mux(mant_carry_5, exp_after_round, fp16_exp)  # [..., 5]
+
         result = torch.cat([s, final_exp, fp16_mant_final], dim=-1)
-        
+
         nan_val = torch.cat([s, ones, ones, ones, ones, ones, ones] + [zeros]*9, dim=-1)
         inf_val = torch.cat([s, ones, ones, ones, ones, ones] + [zeros]*10, dim=-1)
         zero_val = torch.cat([zeros] * 16, dim=-1)
-        
-        result_bits = []
-        for i in range(16):
-            bit = self.overflow_mux[i](is_overflow, inf_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        result_bits = []
-        for i in range(16):
-            bit = self.underflow_mux[i](is_underflow, zero_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        result_bits = []
-        for i in range(16):
-            bit = self.inf_mux[i](is_inf, inf_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
-        
-        result_bits = []
-        for i in range(16):
-            bit = self.nan_mux[i](is_nan, nan_val[..., i:i+1], result[..., i:i+1])
-            result_bits.append(bit)
-        result = torch.cat(result_bits, dim=-1)
+
+        # 向量化: 结果选择 MUX 级联
+        is_overflow_16 = is_overflow.expand_as(result)   # [..., 16]
+        result = self.vec_overflow_mux(is_overflow_16, inf_val, result)  # [..., 16]
+
+        is_underflow_16 = is_underflow.expand_as(result)  # [..., 16]
+        result = self.vec_underflow_mux(is_underflow_16, zero_val, result)  # [..., 16]
+
+        is_inf_16 = is_inf.expand_as(result)  # [..., 16]
+        result = self.vec_inf_mux(is_inf_16, inf_val, result)  # [..., 16]
+
+        is_nan_16 = is_nan.expand_as(result)  # [..., 16]
+        result = self.vec_nan_mux(is_nan_16, nan_val, result)  # [..., 16]
         
         return result
     
@@ -1335,10 +1316,11 @@ class FP32ToFP16Converter(nn.Module):
         for g in self.sticky_or: g.reset()
         self.mant_inc.reset()
         self.not_carry.reset()
-        for g in self.mant_clear_and: g.reset()
         self.exp_inc.reset()
-        for mux in self.overflow_mux: mux.reset()
-        for mux in self.underflow_mux: mux.reset()
-        for mux in self.nan_mux: mux.reset()
-        for mux in self.inf_mux: mux.reset()
-        for mux in self.round_exp_mux: mux.reset()
+        # 向量化门电路
+        self.vec_overflow_mux.reset()
+        self.vec_underflow_mux.reset()
+        self.vec_nan_mux.reset()
+        self.vec_inf_mux.reset()
+        self.vec_round_exp_mux.reset()
+        self.vec_mant_clear_and.reset()
