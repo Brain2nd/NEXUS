@@ -44,6 +44,7 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
         nt = neuron_template
 
         self.to_fp64 = FP32ToFP64Converter(neuron_template=nt)
+        self.to_fp64_w = FP32ToFP64Converter(neuron_template=nt)  # Separate converter for weights
         self.to_fp32 = FP64ToFP32Converter(neuron_template=nt)
 
         self.mul_sq = SpikeFP64Multiplier(neuron_template=nt)
@@ -111,7 +112,7 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
         
         # Weight multiplication
         w_pulse_32 = self._float_to_pulse_tensor(self.weight, device)
-        w_pulse_64 = self.to_fp64(w_pulse_32)
+        w_pulse_64 = self.to_fp64_w(w_pulse_32)  # Use separate converter for weights
         w_expanded = w_pulse_64.expand_as(x_norm)
         
         y_fp64 = self.mul_w(x_norm, w_expanded)
@@ -136,6 +137,7 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
 
     def reset(self):
         self.to_fp64.reset()
+        self.to_fp64_w.reset()
         self.to_fp32.reset()
         self.mul_sq.reset()
         self.div_mean.reset()
@@ -144,6 +146,6 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
         self.div_inv.reset()
         self.mul_scale.reset()
         self.mul_w.reset()
-        
+
         if hasattr(self, 'adders_tree'):
             for a in self.adders_tree: a.reset()
