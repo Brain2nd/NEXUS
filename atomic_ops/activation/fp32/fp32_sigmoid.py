@@ -18,27 +18,29 @@ from atomic_ops.arithmetic.fp32.fp32_div import SpikeFP32Divider
 
 class SpikeFP32Sigmoid(nn.Module):
     """FP32 Sigmoid函数 - 100%纯SNN门电路实现
-    
+
     sigmoid(x) = 1 / (1 + exp(-x))
-    
+
     输入: x [..., 32] FP32脉冲
     输出: sigmoid(x) [..., 32] FP32脉冲
-    
+
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
+        trainable: 是否启用 STE 训练模式（梯度流过）
     """
-    def __init__(self, neuron_template=None):
+    def __init__(self, neuron_template=None, trainable=False):
         super().__init__()
+        self.trainable = trainable
         nt = neuron_template
-        
+
         # 组件
         self.exp = SpikeFP32Exp(neuron_template=nt)
         self.adder = SpikeFP32Adder(neuron_template=nt)
         self.divider = SpikeFP32Divider(neuron_template=nt)
-        
+
         # 符号翻转 (用于计算-x)
         self.sign_not = NOTGate(neuron_template=nt)
-        
+
     def forward(self, x):
         """
         x: [..., 32] FP32脉冲
@@ -46,25 +48,29 @@ class SpikeFP32Sigmoid(nn.Module):
         """
         device = x.device
         batch_shape = x.shape[:-1]
-        zeros = torch.zeros(batch_shape + (1,), device=device)
-        ones = torch.ones(batch_shape + (1,), device=device)
-        
-        # Step 1: 计算 -x (翻转符号位)
-        neg_x_sign = self.sign_not(x[..., 0:1])
-        neg_x = torch.cat([neg_x_sign, x[..., 1:]], dim=-1)
-        
-        # Step 2: exp(-x)
-        exp_neg_x = self.exp(neg_x)
-        
-        # Step 3: 1 + exp(-x)
-        # 构造常量1.0 = 0x3F800000
-        c1 = self._make_constant(0x3F800000, batch_shape, device)
-        one_plus_exp = self.adder(c1, exp_neg_x)
-        
-        # Step 4: 1 / (1 + exp(-x))
-        result = self.divider(c1, one_plus_exp)
-        
-        return result
+
+        # SNN 前向 (纯门电路)
+        with torch.no_grad():
+            # Step 1: 计算 -x (翻转符号位)
+            neg_x_sign = self.sign_not(x[..., 0:1])
+            neg_x = torch.cat([neg_x_sign, x[..., 1:]], dim=-1)
+
+            # Step 2: exp(-x)
+            exp_neg_x = self.exp(neg_x)
+
+            # Step 3: 1 + exp(-x)
+            c1 = self._make_constant(0x3F800000, batch_shape, device)
+            one_plus_exp = self.adder(c1, exp_neg_x)
+
+            # Step 4: 1 / (1 + exp(-x))
+            out_pulse = self.divider(c1, one_plus_exp)
+
+        # 如果训练模式，用 STE 包装以支持梯度
+        if self.trainable and self.training:
+            from atomic_ops.core.ste import ste_sigmoid
+            return ste_sigmoid(x, out_pulse)
+
+        return out_pulse
     
     def _make_constant(self, bits, batch_shape, device):
         """从32位整数构造FP32脉冲常量"""

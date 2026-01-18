@@ -108,15 +108,20 @@ class SpikeFP8Linear_MultiPrecision(nn.Module):
             - 'fp8':  FP8累加 → 输出FP8脉冲[8位]（最快但精度损失大）
         mode: 累加模式，'sequential' 或 'tree'（仅FP8模式支持tree）
         neuron_template: 神经元模板，None 使用默认 IF 神经元
+        trainable: 是否启用 STE 训练模式
+            - False (默认): 纯推理模式，权重为 buffer
+            - True: 训练模式，权重为 Parameter，使用 STE 反向传播
 
     架构:
         输入[FP8] → FP8×FP8→FP32乘法 → 累加[accum_precision] → 输出[accum_precision位数]
     """
-    def __init__(self, in_features, out_features, accum_precision='fp8', neuron_template=None):
+    def __init__(self, in_features, out_features, accum_precision='fp8',
+                 neuron_template=None, trainable=False):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.accum_precision = accum_precision
+        self.trainable = trainable
         nt = neuron_template
 
         # FP8 乘法器（共享）
@@ -138,22 +143,53 @@ class SpikeFP8Linear_MultiPrecision(nn.Module):
             # FP8 累加模式 (单实例，动态扩展机制支持复用)
             self.fp32_to_fp8_converter = FP32ToFP8Converter(neuron_template=nt)
             self.fp8_adder = SpikeFP8Adder_Spatial(neuron_template=nt)
-        
+
+        # 脉冲权重缓存 (推理用)
         self.register_buffer('weight_pulse', None)
+
+        # 浮点权重 (训练用)
+        if trainable:
+            self.weight_float = nn.Parameter(
+                torch.empty(out_features, in_features))
+            nn.init.kaiming_uniform_(self.weight_float, a=5**0.5)
+            self._weight_dirty = True
+        else:
+            self.register_buffer('weight_float', None)
+            self._weight_dirty = False
         
-    def set_weight_from_float(self, weight_float, encoder):
+    def _sync_weight_pulse(self):
+        """同步 float 权重到 pulse 缓存"""
+        if self.trainable and self._weight_dirty:
+            from atomic_ops.encoding.converters import float_to_fp8_bits
+            self.weight_pulse = float_to_fp8_bits(
+                self.weight_float.data,
+                device=self.weight_float.device
+            )
+            self._weight_dirty = False
+
+    def set_weight_from_float(self, weight_float, encoder=None):
         """将 float 权重转换为 FP8 脉冲
-        
+
         Args:
             weight_float: [out_features, in_features] 权重张量
-            encoder: PulseFloatingPointEncoder 实例
+            encoder: PulseFloatingPointEncoder 实例 (推理模式需要，训练模式可选)
         """
         assert weight_float.shape == (self.out_features, self.in_features)
-        
-        # 编码权重
-        weight_pulse = encoder(weight_float)  # [out, in, 1, 8]
-        self.weight_pulse = weight_pulse.squeeze(-2)  # [out, in, 8]
-        
+
+        if self.trainable:
+            # 训练模式：更新 Parameter
+            with torch.no_grad():
+                self.weight_float.copy_(weight_float)
+            self._weight_dirty = True
+        else:
+            # 推理模式：使用 encoder 或 float_to_fp8_bits
+            if encoder is not None:
+                weight_pulse = encoder(weight_float)  # [out, in, 1, 8]
+                self.weight_pulse = weight_pulse.squeeze(-2)  # [out, in, 8]
+            else:
+                from atomic_ops.encoding.converters import float_to_fp8_bits
+                self.weight_pulse = float_to_fp8_bits(weight_float, device=weight_float.device)
+
     def forward(self, x):
         """
         Args:
@@ -164,6 +200,8 @@ class SpikeFP8Linear_MultiPrecision(nn.Module):
             - 'fp16': [..., out_features, 16] FP16 脉冲
             - 'fp32': [..., out_features, 32] FP32 脉冲
         """
+        # 同步权重 (如果需要)
+        self._sync_weight_pulse()
         assert self.weight_pulse is not None, "需要先调用 set_weight_from_float"
 
         # 扩展输入以进行广播乘法
@@ -171,24 +209,36 @@ class SpikeFP8Linear_MultiPrecision(nn.Module):
         # weight: [out_features, in_features, 8]
         x_expanded = x.unsqueeze(-3)
 
-        # 所有模式都使用FP32乘法器（避免乘法阶段舍入）
-        products_fp32 = self.mul_fp32(x_expanded, self.weight_pulse)
+        # SNN 前向 (纯门电路)
+        with torch.no_grad():
+            # 所有模式都使用FP32乘法器（避免乘法阶段舍入）
+            products_fp32 = self.mul_fp32(x_expanded, self.weight_pulse)
 
-        if self.accum_precision == 'fp32':
-            # FP32 模式：FP32累加 → 输出FP32脉冲[32位]
-            if self.in_features == 1:
-                return products_fp32.squeeze(-2)
-            return self._fp32_accumulate(products_fp32)
-        elif self.accum_precision == 'fp16':
-            # FP16 模式：FP32累加 → FP32→FP16 → 输出FP16脉冲[16位]
-            if self.in_features == 1:
-                return self.fp32_to_fp16(products_fp32.squeeze(-2))
-            return self._fp16_accumulate(products_fp32)
-        else:
-            # FP8 模式：FP32转FP8 → FP8累加 → 输出FP8脉冲[8位]
-            if self.in_features == 1:
-                return self.fp32_to_fp8_converter(products_fp32.squeeze(-2))
-            return self._fp8_accumulate(products_fp32)
+            if self.accum_precision == 'fp32':
+                # FP32 模式：FP32累加 → 输出FP32脉冲[32位]
+                if self.in_features == 1:
+                    out_pulse = products_fp32.squeeze(-2)
+                else:
+                    out_pulse = self._fp32_accumulate(products_fp32)
+            elif self.accum_precision == 'fp16':
+                # FP16 模式：FP32累加 → FP32→FP16 → 输出FP16脉冲[16位]
+                if self.in_features == 1:
+                    out_pulse = self.fp32_to_fp16(products_fp32.squeeze(-2))
+                else:
+                    out_pulse = self._fp16_accumulate(products_fp32)
+            else:
+                # FP8 模式：FP32转FP8 → FP8累加 → 输出FP8脉冲[8位]
+                if self.in_features == 1:
+                    out_pulse = self.fp32_to_fp8_converter(products_fp32.squeeze(-2))
+                else:
+                    out_pulse = self._fp8_accumulate(products_fp32)
+
+        # 如果训练模式，用 STE 包装以支持梯度
+        if self.trainable and self.training:
+            from atomic_ops.core.ste import ste_linear
+            return ste_linear(x, self.weight_float, out_pulse)
+
+        return out_pulse
     
     def _fp8_accumulate(self, products_fp32):
         """FP8 累加：FP32转FP8 → FP8累加 → 输出FP8脉冲"""
@@ -233,4 +283,11 @@ class SpikeFP8Linear_MultiPrecision(nn.Module):
     def reset(self):
         """向后兼容"""
         self.reset_all()
+
+    def train(self, mode=True):
+        """切换训练模式时标记权重需要同步"""
+        super().train(mode)
+        if mode and self.trainable:
+            self._weight_dirty = True
+        return self
 

@@ -11,3 +11,31 @@ from .vec_logic_gates import (
     VecHalfAdder, VecFullAdder,
     VecAdder, VecSubtractor, VecComparator
 )
+
+# STE (Straight-Through Estimator) for SNN training
+from .ste import (
+    # Autograd Functions
+    STELinearFunction,
+    STEEmbeddingFunction,
+    STERMSNormFunction,
+    STELayerNormFunction,
+    STEExpFunction,
+    STESigmoidFunction,
+    STETanhFunction,
+    STESiLUFunction,
+    STEGELUFunction,
+    STESoftmaxFunction,
+    STEReLUFunction,
+    # Convenience wrapper functions
+    ste_linear,
+    ste_embedding,
+    ste_rmsnorm,
+    ste_layernorm,
+    ste_exp,
+    ste_sigmoid,
+    ste_tanh,
+    ste_silu,
+    ste_gelu,
+    ste_softmax,
+    ste_relu,
+)

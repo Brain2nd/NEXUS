@@ -9,3 +9,21 @@ from .fp32_components import (
     FP32ToFP8Converter,
     FP32ToFP16Converter
 )
+from .fp32_constants import (
+    get_pulse_constant,
+    get_zero_pulse,
+    get_one_pulse,
+    get_neg_one_pulse,
+    get_half_pulse,
+    get_two_pulse,
+    PulseConstants,
+    clear_cache
+)
+from .fp32_matmul import (
+    SpikeFP32MatMul,
+    SpikeFP32MatMulTransposed,
+    SpikeFP32OuterProduct,
+    SpikeFP32VecMul,
+    SpikeFP32VecAdd,
+    SpikeFP32VecSub
+)

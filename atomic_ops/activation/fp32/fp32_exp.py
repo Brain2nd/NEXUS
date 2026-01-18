@@ -567,7 +567,7 @@ class SpikeFP32ScaleBy2K(nn.Module):
 # ==============================================================================
 class SpikeFP32Exp(nn.Module):
     """FP32 指数函数 exp(x) - 100%纯SNN门电路实现
-    
+
     算法:
     1. z = round(x * N/ln2), N=32
     2. k = z // 32, j = z % 32
@@ -575,12 +575,14 @@ class SpikeFP32Exp(nn.Module):
     4. T = lookup(j)
     5. P = C1*r + C2*r^2 + C3*r^3 + 1
     6. res = 2^k * T * P
-    
+
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
+        trainable: 是否启用 STE 训练模式（梯度流过）
     """
-    def __init__(self, neuron_template=None):
+    def __init__(self, neuron_template=None, trainable=False):
         super().__init__()
+        self.trainable = trainable
         nt = neuron_template
         
         # 运算组件
@@ -649,122 +651,129 @@ class SpikeFP32Exp(nn.Module):
         batch_shape = x.shape[:-1]
         zeros = torch.zeros(batch_shape + (1,), device=device)
 
-        s_x = x[..., 0:1]
-        e_x = x[..., 1:9]
-        m_x = x[..., 9:32]
+        # SNN 前向 (纯门电路)
+        with torch.no_grad():
+            s_x = x[..., 0:1]
+            e_x = x[..., 1:9]
+            m_x = x[..., 9:32]
 
-        # 特殊值检测 (tree reduction)
-        e_all_one = e_x[..., 0:1]
-        for i in range(1, 8):
-            e_all_one = self.exp_all_one_and(e_all_one, e_x[..., i:i+1])
+            # 特殊值检测 (tree reduction)
+            e_all_one = e_x[..., 0:1]
+            for i in range(1, 8):
+                e_all_one = self.exp_all_one_and(e_all_one, e_x[..., i:i+1])
 
-        m_any_one = m_x[..., 0:1]
-        for i in range(1, 23):
-            m_any_one = self.mant_zero_or(m_any_one, m_x[..., i:i+1])
-        m_is_zero = self.mant_zero_not(m_any_one)
-        
-        is_nan = self.is_nan_and(e_all_one, m_any_one)
-        not_sign = self.sign_not2(s_x)
-        is_inf_base = self.is_pos_inf_and(e_all_one, m_is_zero)
-        is_pos_inf = self.is_pos_inf_and(is_inf_base, not_sign)
-        is_neg_inf = self.is_neg_inf_and(is_inf_base, s_x)
-        
-        # 常量
-        # N/ln2 = 32 / 0.693147... = 46.16624
-        inv_ln2_n = self._make_constant(0x4238aa3b, batch_shape, device)
-        # 0.5
-        half = self._make_constant(0x3f000000, batch_shape, device)
-        # ln2_hi/N = 0.69314575 / 32 = 0.0216608
-        ln2_hi_n = self._make_constant(0x3cb17200, batch_shape, device)
-        # ln2_lo/N = 1.428e-6 / 32 = 4.46e-8
-        ln2_lo_n = self._make_constant(0x333fbe8e, batch_shape, device)
-        # 1/32
-        inv_32 = self._make_constant(0x3d000000, batch_shape, device)
-        # Coeffs
-        c1 = self._make_constant(0x3f800000, batch_shape, device) # 1.0
-        c2 = self._make_constant(0x3f000000, batch_shape, device) # 0.5
-        c3 = self._make_constant(0x3e2aaaab, batch_shape, device) # 0.16666...
-        
-        # 1. z = round(x * N/ln2)
-        x_scaled = self.mul_inv_ln2(x, inv_ln2_n)
-        x_plus_half = self.add_half(x_scaled, half)
-        z = self.floor(x_plus_half)
-        
-        # 2. 分解 z -> k, j
-        # k = floor(z / 32)
-        z_div_32 = self.mul_1_32(z, inv_32)
-        k = self.floor_k(z_div_32)
-        
-        # j = z % 32
-        # j_float = z - k * 32
-        # k * 32.0 (FP32)
-        const_32 = self._make_constant(0x42000000, batch_shape, device)
-        k_times_32 = self.mul_32(k, const_32)
-        
-        # negate k_times_32
-        neg_k32_s = self.sign_not_j(k_times_32[..., 0:1])
-        neg_k32 = torch.cat([neg_k32_s, k_times_32[..., 1:]], dim=-1)
-        
-        # j_float = z + (-k*32)
-        j_float = self.sub_j(z, neg_k32)
-        
-        # 提取低5位
-        j_bits = self.extract_j(j_float)
-        
-        # 3. r = x - z*(ln2_hi/N) - z*(ln2_lo/N)
-        z_ln2_hi = self.mul_z_ln2_hi(z, ln2_hi_n)
-        z_ln2_lo = self.mul_z_ln2_lo(z, ln2_lo_n)
-        
-        # Negate z_ln2
-        neg_hi_s = self.sign_not_hi(z_ln2_hi[..., 0:1])
-        neg_hi = torch.cat([neg_hi_s, z_ln2_hi[..., 1:]], dim=-1)
-        
-        neg_lo_s = self.sign_not_lo(z_ln2_lo[..., 0:1])
-        neg_lo = torch.cat([neg_lo_s, z_ln2_lo[..., 1:]], dim=-1)
-        
-        # x - hi - lo
-        tmp = self.sub_hi(x, neg_hi)
-        r = self.sub_lo(tmp, neg_lo)
-        
-        # 4. T = lookup(j)
-        T = self.lookup(j_bits)
-        
-        # 5. P = 1 + r + C2*r^2 + C3*r^3
-        # Horner: 1 + r * (1 + r * (C2 + r * C3))
-        # P0 = C3*r + C2
-        r_c3 = self.mul_c3(r, c3)
-        p0 = self.add_1(r_c3, c2)
-        
-        # P1 = p0*r + 1
-        p0_r = self.mul_c2(p0, r)
-        p1 = self.add_2(p0_r, c1)
-        
-        # P2 = p1*r + 1
-        p1_r = self.mul_r2(p1, r)
-        P = self.add_3(p1_r, c1)
-        
-        # 6. Result = 2^k * T * P
-        TP = self.mul_tp(T, P)
-        result = self.scale(TP, k)
-        
-        # 特殊值输出 (vectorized)
-        nan_val = self._make_constant(0x7FC00000, batch_shape, device)
-        inf_val = self._make_constant(0x7F800000, batch_shape, device)
-        zero_val = torch.cat([zeros] * 32, dim=-1)
+            m_any_one = m_x[..., 0:1]
+            for i in range(1, 23):
+                m_any_one = self.mant_zero_or(m_any_one, m_x[..., i:i+1])
+            m_is_zero = self.mant_zero_not(m_any_one)
 
-        # NaN
-        is_nan_32 = is_nan.expand_as(result)
-        result = self.nan_mux(is_nan_32, nan_val, result)
+            is_nan = self.is_nan_and(e_all_one, m_any_one)
+            not_sign = self.sign_not2(s_x)
+            is_inf_base = self.is_pos_inf_and(e_all_one, m_is_zero)
+            is_pos_inf = self.is_pos_inf_and(is_inf_base, not_sign)
+            is_neg_inf = self.is_neg_inf_and(is_inf_base, s_x)
 
-        # -Inf -> 0
-        is_neg_inf_32 = is_neg_inf.expand_as(result)
-        result = self.zero_mux(is_neg_inf_32, zero_val, result)
+            # 常量
+            # N/ln2 = 32 / 0.693147... = 46.16624
+            inv_ln2_n = self._make_constant(0x4238aa3b, batch_shape, device)
+            # 0.5
+            half = self._make_constant(0x3f000000, batch_shape, device)
+            # ln2_hi/N = 0.69314575 / 32 = 0.0216608
+            ln2_hi_n = self._make_constant(0x3cb17200, batch_shape, device)
+            # ln2_lo/N = 1.428e-6 / 32 = 4.46e-8
+            ln2_lo_n = self._make_constant(0x333fbe8e, batch_shape, device)
+            # 1/32
+            inv_32 = self._make_constant(0x3d000000, batch_shape, device)
+            # Coeffs
+            c1 = self._make_constant(0x3f800000, batch_shape, device) # 1.0
+            c2 = self._make_constant(0x3f000000, batch_shape, device) # 0.5
+            c3 = self._make_constant(0x3e2aaaab, batch_shape, device) # 0.16666...
 
-        # +Inf -> +Inf
-        is_pos_inf_32 = is_pos_inf.expand_as(result)
-        result = self.inf_mux(is_pos_inf_32, inf_val, result)
-        
-        return result
+            # 1. z = round(x * N/ln2)
+            x_scaled = self.mul_inv_ln2(x, inv_ln2_n)
+            x_plus_half = self.add_half(x_scaled, half)
+            z = self.floor(x_plus_half)
+
+            # 2. 分解 z -> k, j
+            # k = floor(z / 32)
+            z_div_32 = self.mul_1_32(z, inv_32)
+            k = self.floor_k(z_div_32)
+
+            # j = z % 32
+            # j_float = z - k * 32
+            # k * 32.0 (FP32)
+            const_32 = self._make_constant(0x42000000, batch_shape, device)
+            k_times_32 = self.mul_32(k, const_32)
+
+            # negate k_times_32
+            neg_k32_s = self.sign_not_j(k_times_32[..., 0:1])
+            neg_k32 = torch.cat([neg_k32_s, k_times_32[..., 1:]], dim=-1)
+
+            # j_float = z + (-k*32)
+            j_float = self.sub_j(z, neg_k32)
+
+            # 提取低5位
+            j_bits = self.extract_j(j_float)
+
+            # 3. r = x - z*(ln2_hi/N) - z*(ln2_lo/N)
+            z_ln2_hi = self.mul_z_ln2_hi(z, ln2_hi_n)
+            z_ln2_lo = self.mul_z_ln2_lo(z, ln2_lo_n)
+
+            # Negate z_ln2
+            neg_hi_s = self.sign_not_hi(z_ln2_hi[..., 0:1])
+            neg_hi = torch.cat([neg_hi_s, z_ln2_hi[..., 1:]], dim=-1)
+
+            neg_lo_s = self.sign_not_lo(z_ln2_lo[..., 0:1])
+            neg_lo = torch.cat([neg_lo_s, z_ln2_lo[..., 1:]], dim=-1)
+
+            # x - hi - lo
+            tmp = self.sub_hi(x, neg_hi)
+            r = self.sub_lo(tmp, neg_lo)
+
+            # 4. T = lookup(j)
+            T = self.lookup(j_bits)
+
+            # 5. P = 1 + r + C2*r^2 + C3*r^3
+            # Horner: 1 + r * (1 + r * (C2 + r * C3))
+            # P0 = C3*r + C2
+            r_c3 = self.mul_c3(r, c3)
+            p0 = self.add_1(r_c3, c2)
+
+            # P1 = p0*r + 1
+            p0_r = self.mul_c2(p0, r)
+            p1 = self.add_2(p0_r, c1)
+
+            # P2 = p1*r + 1
+            p1_r = self.mul_r2(p1, r)
+            P = self.add_3(p1_r, c1)
+
+            # 6. Result = 2^k * T * P
+            TP = self.mul_tp(T, P)
+            out_pulse = self.scale(TP, k)
+
+            # 特殊值输出 (vectorized)
+            nan_val = self._make_constant(0x7FC00000, batch_shape, device)
+            inf_val = self._make_constant(0x7F800000, batch_shape, device)
+            zero_val = torch.cat([zeros] * 32, dim=-1)
+
+            # NaN
+            is_nan_32 = is_nan.expand_as(out_pulse)
+            out_pulse = self.nan_mux(is_nan_32, nan_val, out_pulse)
+
+            # -Inf -> 0
+            is_neg_inf_32 = is_neg_inf.expand_as(out_pulse)
+            out_pulse = self.zero_mux(is_neg_inf_32, zero_val, out_pulse)
+
+            # +Inf -> +Inf
+            is_pos_inf_32 = is_pos_inf.expand_as(out_pulse)
+            out_pulse = self.inf_mux(is_pos_inf_32, inf_val, out_pulse)
+
+        # 如果训练模式，用 STE 包装以支持梯度
+        if self.trainable and self.training:
+            from atomic_ops.core.ste import ste_exp
+            return ste_exp(x, out_pulse)
+
+        return out_pulse
 
     def reset(self):
         self.mul_inv_ln2.reset()

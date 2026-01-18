@@ -30,6 +30,34 @@ with SpikeMode.bit_exact():
 # SpikeMode 模式控制器 (位精确模式 vs 时间动力学模式)
 from .core.spike_mode import SpikeMode
 
+# STE (Straight-Through Estimator) for SNN training
+from .core.ste import (
+    # Autograd Functions
+    STELinearFunction,
+    STEEmbeddingFunction,
+    STERMSNormFunction,
+    STELayerNormFunction,
+    STEExpFunction,
+    STESigmoidFunction,
+    STETanhFunction,
+    STESiLUFunction,
+    STEGELUFunction,
+    STESoftmaxFunction,
+    STEReLUFunction,
+    # Convenience wrapper functions
+    ste_linear,
+    ste_embedding,
+    ste_rmsnorm,
+    ste_layernorm,
+    ste_exp,
+    ste_sigmoid,
+    ste_tanh,
+    ste_silu,
+    ste_gelu,
+    ste_softmax,
+    ste_relu,
+)
+
 # 转换工具函数
 from .encoding.converters import (
     float_to_fp8_bits, fp8_bits_to_float,
@@ -139,3 +167,6 @@ from .attention.attention import (
     SpikeFP16MultiHeadAttention,
     SpikeFP32MultiHeadAttention,
 )
+
+# 纯脉冲优化器
+from .optim import PulseSGD, PulseSGDWithMomentum
