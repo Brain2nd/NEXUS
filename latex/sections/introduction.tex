@@ -1,0 +1,37 @@
+%==============================================================================
+% INTRODUCTION
+%==============================================================================
+
+The computing world faces a dual crisis: the end of Moore's Law and the energy efficiency wall of von Neumann architectures~\citep{schuman2017survey}. As transistor scaling approaches physical limits and data movement dominates power consumption, the explosive computational demands of artificial intelligence require a paradigm shift. Spiking Neural Networks (SNNs), with their event-driven sparse computation and in-memory processing potential, have emerged as one of the most promising post-Moore computing paradigms, offering orders of magnitude improvement in energy efficiency~\citep{kudithipudi2025neuromorphic}.
+
+Despite their promise for brain-inspired computing, SNNs have long been perceived as \textbf{inherently approximate computational models}. This ``precision barrier'' relegates SNNs to pattern recognition and sensory processing tasks, while high-fidelity computations---scientific simulations, financial modeling, and modern deep learning algorithms requiring precise gradients---must be outsourced to traditional coprocessors~\citep{george2019neuromorphic,dubey2020floating}. This hybrid approach fundamentally compromises the vision of pure neuromorphic computing.
+
+This raises a fundamental question: \textit{Can we break the ``SNN = approximate computation'' paradigm?} Specifically:
+\begin{itemize}
+    \item Can SNNs execute \textbf{verifiable, bit-exact IEEE 754 floating-point arithmetic} like traditional CPUs?
+    \item Can such a precise SNN framework be \textbf{effectively trained} via gradient-based methods?
+    \item Can it operate \textbf{robustly on physical hardware} with noise, leakage, and process variations?
+\end{itemize}
+
+We answer all three questions affirmatively by presenting \textbf{MofNeuroSim}, a framework that implements IEEE 754 floating-point arithmetic entirely through spiking neural networks using Generalized Leaky Integrate-and-Fire (GLIF) neurons. Our contributions are:
+
+\begin{enumerate}
+    \item \textbf{Theoretical Foundation}: We prove the \textit{GLIF Topological Embedding Theorem}, establishing that GLIF networks with soft reset and dynamic thresholds create deterministic, chaos-free computation spaces homeomorphic to high-dimensional tori. This theorem has three profound implications:
+    \begin{itemize}
+        \item It fundamentally overturns the ``SNN is inherently fuzzy'' perception, theoretically establishing the possibility of exact computation.
+        \item It proves GLIF neurons are \textit{topologically equivalent} to complex Hodgkin-Huxley neurons in computational capability---choosing GLIF is not a simplification sacrificing biological realism.
+        \item It applies uniformly to ideal IF ($\beta=1$) and physical LIF ($\beta<1$) neurons, unifying exact computation with hardware physics.
+    \end{itemize}
+
+    \item \textbf{Complete Arithmetic System}: We construct a hierarchical architecture from GLIF neurons to logic gates, arithmetic units, IEEE 754 operators (FP8/16/32/64), and neural network layers including Linear, LayerNorm, RMSNorm, Attention, and activation functions (Sigmoid, Tanh, GELU, Softmax).
+
+    \item \textbf{Training Capability}: We implement end-to-end training via Straight-Through Estimator (STE) with a custom PulseSGD optimizer operating entirely in the pulse domain. The framework provides a TEMPORAL training mode interface for future integration of neuromorphic learning rules such as STDP.
+
+    \item \textbf{Hardware Robustness}: Through our neuron template system, we demonstrate that switching to LIF mode ($\beta < 1$) simulates physical imperfections (device noise, threshold variations, leakage currents), with theoretical guarantees from the embedding theorem ensuring computational stability.
+
+    \item \textbf{Bit-Exact Verification}: For FP16, FP32, and FP64, we achieve 0 ULP (Unit in the Last Place) error compared to PyTorch, meaning our results are bit-identical to IEEE 754 machine precision. For FP8, bit-exactness is achieved within the format's intrinsic limits.
+\end{enumerate}
+
+The name ``MofNeuroSim'' reflects our vision of deep integration with Metal-Organic Framework (MOF) materials---emerging substrates that provide the \emph{physical foundation} for high-density, low-power neuromorphic chips via MOF memristors~\citep{xu2024organic,bachinin2024mof}. MofNeuroSim provides the ``algorithmic soul'' for these next-generation hardware platforms: a framework that is precise, trainable, and physically robust. Together, they form a complete theoretical loop from software algorithms to material hardware.
+
+The remainder of this paper is organized as follows. Section~\ref{sec:related} reviews related work in neuromorphic computing and SNN arithmetic. Section~\ref{sec:methods} presents our theoretical foundations and the complete MofNeuroSim architecture. Section~\ref{sec:experiments} provides experimental validation. Section~\ref{sec:conclusion} discusses implications and future directions.

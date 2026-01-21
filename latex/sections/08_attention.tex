@@ -1,0 +1,122 @@
+%==============================================================================
+% SECTION 8: ATTENTION MECHANISM
+%==============================================================================
+
+\subsection{Attention Mechanism}
+\label{sec:attention}
+
+This section describes the implementation of the multi-head attention mechanism using SNN operators. Attention is the core component of Transformer architectures.
+
+\subsubsection{Scaled Dot-Product Attention}
+
+The scaled dot-product attention is defined by Equation~\ref{eq:attention}:
+
+\begin{equation}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Softmax}\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right)\mathbf{V}
+\label{eq:attention}
+\end{equation}
+where $\mathbf{Q} \in \mathbb{R}^{S \times d_k}$ denotes the queries, $\mathbf{K} \in \mathbb{R}^{S \times d_k}$ denotes the keys, $\mathbf{V} \in \mathbb{R}^{S \times d_v}$ denotes the values, $S$ denotes the sequence length, $d_k$ denotes the key dimension, and $d_v$ denotes the value dimension.
+
+\paragraph{SNN Implementation}
+The computation proceeds as: QK product ($\mathbf{A} = \mathbf{Q}\mathbf{K}^T$) using SNN matrix multiplication, scale ($\mathbf{A}' = \mathbf{A} / \sqrt{d_k}$) by precomputed constant, apply softmax (Section~\ref{sec:softmax}), then value aggregation ($\mathbf{O} = \mathbf{P}\mathbf{V}$) using SNN matrix multiplication.
+
+\subsubsection{Multi-Head Attention}
+
+Multi-head attention applies multiple attention functions in parallel as given by Equation~\ref{eq:mha}:
+
+\begin{equation}
+\text{MultiHead}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h)\mathbf{W}^O
+\label{eq:mha}
+\end{equation}
+where $h$ denotes the number of attention heads and $\mathbf{W}^O$ denotes the output projection matrix. Each head computes attention as given by Equation~\ref{eq:head}:
+
+\begin{equation}
+\text{head}_i = \text{Attention}(\mathbf{Q}\mathbf{W}^Q_i, \mathbf{K}\mathbf{W}^K_i, \mathbf{V}\mathbf{W}^V_i)
+\label{eq:head}
+\end{equation}
+where $\mathbf{W}^Q_i, \mathbf{W}^K_i, \mathbf{W}^V_i$ denote the learned projection matrices for head $i$.
+
+\paragraph{SNN Implementation}
+The computation proceeds as: apply SNN linear layers (Section~\ref{sec:linear}) to compute projections $\mathbf{Q}_i = \mathbf{X}\mathbf{W}^Q_i$, $\mathbf{K}_i = \mathbf{X}\mathbf{W}^K_i$, $\mathbf{V}_i = \mathbf{X}\mathbf{W}^V_i$ for each head, compute attention for each head in parallel, concatenate head outputs along the feature dimension, then apply output projection ($\mathbf{O} = \text{Concat}(\ldots)\mathbf{W}^O$).
+
+\subsubsection{Rotary Position Embedding (RoPE)}
+\label{sec:rope}
+
+RoPE encodes position information by rotating query and key vectors as given by Equation~\ref{eq:rope}:
+
+\begin{equation}
+\text{RoPE}(\mathbf{x}, m) = \mathbf{R}_m \mathbf{x}
+\label{eq:rope}
+\end{equation}
+where $\mathbf{x}$ denotes the input vector, $m$ denotes the position index, and $\mathbf{R}_m$ denotes the rotation matrix.
+
+\paragraph{Rotation Matrix}
+For a $d$-dimensional vector, RoPE applies $d/2$ 2D rotations. The rotation matrix is given by Equation~\ref{eq:rotation_matrix}:
+
+\begin{equation}
+\mathbf{R}_m = \begin{pmatrix}
+\cos(m\theta_1) & -\sin(m\theta_1) & & \\
+\sin(m\theta_1) & \cos(m\theta_1) & & \\
+& & \ddots & \\
+& & & \cos(m\theta_{d/2}) & -\sin(m\theta_{d/2}) \\
+& & & \sin(m\theta_{d/2}) & \cos(m\theta_{d/2})
+\end{pmatrix}
+\label{eq:rotation_matrix}
+\end{equation}
+where $\mathbf{R}_m$ denotes the rotation matrix at position $m$, $d$ denotes the embedding dimension, and $\theta_i = 10000^{-2(i-1)/d}$ denotes the frequency for dimension pair $i$.
+
+\paragraph{Efficient Computation}
+Rather than explicit matrix multiplication, RoPE is computed element-wise as given by Equation~\ref{eq:rope_efficient}:
+
+\begin{align}
+x'_{2i-1} &= x_{2i-1} \cos(m\theta_i) - x_{2i} \sin(m\theta_i) \nonumber \\
+x'_{2i} &= x_{2i-1} \sin(m\theta_i) + x_{2i} \cos(m\theta_i)
+\label{eq:rope_efficient}
+\end{align}
+where $x_{2i-1}, x_{2i}$ denote consecutive input elements, $x'_{2i-1}, x'_{2i}$ denote the rotated outputs, $m$ denotes the position, and $\theta_i$ denotes the frequency for dimension pair $i$.
+
+\paragraph{SNN Trigonometric Functions}
+The sine and cosine functions are implemented using the Taylor series given by Equations~\ref{eq:sin_taylor} and~\ref{eq:cos_taylor}:
+
+\begin{align}
+\sin(x) &= x - \frac{x^3}{3!} + \frac{x^5}{5!} - \frac{x^7}{7!} + \cdots \label{eq:sin_taylor} \\
+\cos(x) &= 1 - \frac{x^2}{2!} + \frac{x^4}{4!} - \frac{x^6}{6!} + \cdots \label{eq:cos_taylor}
+\end{align}
+where $x$ denotes the input angle in radians.
+
+\paragraph{Range Reduction}
+Input angles are reduced to $[-\pi, \pi]$ using modular arithmetic as given by Equation~\ref{eq:angle_reduce}:
+
+\begin{equation}
+x' = x - 2\pi \lfloor (x + \pi) / (2\pi) \rfloor
+\label{eq:angle_reduce}
+\end{equation}
+where $x$ denotes the input angle and $x'$ denotes the reduced angle.
+
+\subsubsection{Causal Masking}
+
+For autoregressive models, attention scores are masked to prevent attending to future positions. The causal mask is defined by Equation~\ref{eq:causal_mask}:
+
+\begin{equation}
+\text{mask}_{ij} = \begin{cases} 0 & \text{if } j \leq i \\ -\infty & \text{if } j > i \end{cases}
+\label{eq:causal_mask}
+\end{equation}
+where $i$ denotes the query position, $j$ denotes the key position, and $\text{mask}_{ij}$ denotes the mask value.
+
+\paragraph{SNN Implementation}
+The mask is applied before softmax by adding the mask to attention scores as given by Equation~\ref{eq:mask_apply}:
+
+\begin{equation}
+\mathbf{A}'_{ij} = \mathbf{A}_{ij} + \text{mask}_{ij}
+\label{eq:mask_apply}
+\end{equation}
+where $\mathbf{A}_{ij}$ denotes the raw attention score and $\mathbf{A}'_{ij}$ denotes the masked attention score. The mask is generated using position comparators built from SNN logic gates.
+
+\subsubsection{Flash Attention Considerations}
+
+While the standard attention implementation is memory-intensive ($O(S^2)$ for sequence length $S$), the SNN implementation processes elements sequentially, naturally reducing memory requirements. However, this increases latency. Trade-offs between memory and compute are managed through chunked processing of attention scores, online softmax computation, and streaming accumulation of output.
+
+\subsubsection{Precision Considerations}
+
+Attention computation is sensitive to numerical precision: the QK product may produce large values (FP32 recommended), softmax requires careful handling of large negative values, and the scale factor $1/\sqrt{d_k}$ is precomputed as a constant. For FP16 inputs, we use FP32 accumulation in matrix multiplications and FP32 softmax computation.
+

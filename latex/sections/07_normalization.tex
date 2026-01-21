@@ -1,0 +1,106 @@
+%==============================================================================
+% SECTION 7: NORMALIZATION LAYERS
+%==============================================================================
+
+\subsection{Normalization Layers}
+\label{sec:normalization}
+
+This section describes the implementation of normalization layers using SNN operators. Normalization is critical for training stability and is widely used in modern neural networks.
+
+\subsubsection{RMSNorm (Root Mean Square Normalization)}
+\label{sec:rmsnorm}
+
+RMSNorm simplifies LayerNorm by removing the mean centering. The RMSNorm operation is defined by Equation~\ref{eq:rmsnorm}:
+
+\begin{equation}
+\text{RMSNorm}(\mathbf{x}) = \frac{\mathbf{x}}{\text{RMS}(\mathbf{x})} \cdot \boldsymbol{\gamma}
+\label{eq:rmsnorm}
+\end{equation}
+where $\mathbf{x}$ denotes the input vector, $\boldsymbol{\gamma}$ denotes the learnable scale parameter, and $\text{RMS}(\mathbf{x})$ denotes the root mean square computed as given by Equation~\ref{eq:rms}:
+
+\begin{equation}
+\text{RMS}(\mathbf{x}) = \sqrt{\frac{1}{n}\sum_{i=1}^{n} x_i^2 + \epsilon}
+\label{eq:rms}
+\end{equation}
+where $n$ denotes the number of elements, $x_i$ denotes the $i$-th element, and $\epsilon$ denotes a small constant for numerical stability.
+
+\paragraph{SNN Implementation}
+The computation proceeds as: square each element ($x_i^2$), sum using adder tree ($\sum_i x_i^2$), multiply by $1/n$, add epsilon, compute square root (Section~\ref{sec:fp_sqrt}), take reciprocal via Newton-Raphson, then scale by $\gamma_i$ to obtain the output.
+
+\paragraph{High-Precision Implementation}
+For maximum accuracy, we use FP64 intermediate precision as given by Equation~\ref{eq:rms_fp64}:
+
+\begin{equation}
+\text{RMS}(\mathbf{x})_{\text{FP64}} = \sqrt{\frac{1}{n}\sum_{i=1}^{n} \text{FP64}(x_i)^2 + \epsilon}
+\label{eq:rms_fp64}
+\end{equation}
+where $\text{FP64}(x_i)$ denotes the conversion of $x_i$ to FP64 precision and $\text{RMS}(\mathbf{x})_{\text{FP64}}$ denotes the RMS computed in FP64. The input is converted to FP64, processed, and the result converted back to FP32.
+
+\subsubsection{LayerNorm (Layer Normalization)}
+\label{sec:layernorm}
+
+LayerNorm normalizes across the feature dimension with mean centering as given by Equation~\ref{eq:layernorm}:
+
+\begin{equation}
+\text{LayerNorm}(\mathbf{x}) = \frac{\mathbf{x} - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \boldsymbol{\gamma} + \boldsymbol{\beta}
+\label{eq:layernorm}
+\end{equation}
+where $\mathbf{x}$ denotes the input vector, $\mu$ denotes the mean, $\sigma^2$ denotes the variance, $\epsilon$ denotes the stability constant, $\boldsymbol{\gamma}$ denotes the learnable scale, and $\boldsymbol{\beta}$ denotes the learnable shift. The mean and variance are computed as given by Equations~\ref{eq:ln_mean} and~\ref{eq:ln_var}:
+\begin{align}
+\mu &= \frac{1}{n}\sum_{i=1}^{n} x_i \label{eq:ln_mean} \\
+\sigma^2 &= \frac{1}{n}\sum_{i=1}^{n} (x_i - \mu)^2 \label{eq:ln_var}
+\end{align}
+where $n$ denotes the number of elements and $x_i$ denotes the $i$-th element.
+
+\paragraph{SNN Implementation}
+The computation proceeds as: compute mean ($\mu = \frac{1}{n}\sum_i x_i$) using adder tree, center ($x'_i = x_i - \mu$), compute variance ($\sigma^2 = \frac{1}{n}\sum_i (x'_i)^2$), add epsilon, compute inverse square root via Newton-Raphson, then apply scale and shift ($y_i = \gamma_i \hat{x}_i + \beta_i$).
+
+\paragraph{Inverse Square Root}
+Instead of computing $\sqrt{\cdot}$ then $1/\cdot$, we directly compute the inverse square root using the Newton-Raphson iteration given by Equation~\ref{eq:invsqrt}:
+
+\begin{equation}
+y_{n+1} = \frac{y_n}{2} \left(3 - x \cdot y_n^2\right)
+\label{eq:invsqrt}
+\end{equation}
+where $y_n$ denotes the $n$-th approximation to $1/\sqrt{x}$ and $x$ denotes the input value. This iteration converges quadratically to $y = 1/\sqrt{x}$.
+
+\subsubsection{Parameter Storage}
+
+Normalization parameters are stored in pulse format as given by Equation~\ref{eq:norm_params}:
+
+\begin{align}
+\pulse{\boldsymbol{\gamma}} &\in \{0,1\}^{n \times 32} \nonumber \\
+\pulse{\boldsymbol{\beta}} &\in \{0,1\}^{n \times 32}
+\label{eq:norm_params}
+\end{align}
+where $\pulse{\boldsymbol{\gamma}}$ denotes the pulse-encoded scale parameter, $\pulse{\boldsymbol{\beta}}$ denotes the pulse-encoded shift parameter, and $n$ denotes the normalized dimension.
+
+\subsubsection{Computational Complexity}
+
+Table~\ref{tab:norm_complexity} compares the computational requirements:
+
+\begin{table}[t]
+\centering
+\caption{Normalization Layer Complexity}
+\label{tab:norm_complexity}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Layer} & \textbf{Cost} \\
+\midrule
+RMSNorm & 1$\times$ \\
+LayerNorm & 1.5$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+RMSNorm is preferred in many modern architectures (e.g., LLaMA, Gemma) due to its lower computational cost while maintaining comparable effectiveness.
+
+\subsubsection{Numerical Considerations}
+
+\paragraph{Epsilon Selection}
+The epsilon value $\epsilon$ prevents division by zero and should be set according to the precision: FP16 uses $\epsilon = 10^{-5}$ to $10^{-6}$, FP32 uses $\epsilon = 10^{-5}$ to $10^{-8}$, and FP64 uses $\epsilon = 10^{-12}$.
+
+\paragraph{Accumulation Precision}
+The sum of squares can overflow for large feature dimensions. Using FP64 accumulation for FP32 inputs prevents this issue.
+

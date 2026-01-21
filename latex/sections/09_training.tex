@@ -1,0 +1,155 @@
+%==============================================================================
+% SECTION 9: TRAINING FRAMEWORK
+%==============================================================================
+
+\subsection{Training Framework}
+\label{sec:training}
+
+This section describes the training methodology for MofNeuroSim, enabling gradient-based learning while maintaining the pure SNN constraint. The key challenge is computing gradients through discrete spike operations.
+
+\subsubsection{Straight-Through Estimator (STE)}
+
+The Heaviside step function $\heaviside(\cdot)$ has zero gradient almost everywhere, preventing standard backpropagation. We address this using the Straight-Through Estimator (STE) as given by Equation~\ref{eq:ste}:
+
+\begin{equation}
+\frac{\partial \heaviside(x)}{\partial x} \approx 1
+\label{eq:ste}
+\end{equation}
+where the Heaviside gradient is approximated as unity for gradient flow.
+
+\paragraph{Forward Pass}
+The forward pass uses discrete spikes as normal as given by Equation~\ref{eq:ste_forward}:
+
+\begin{equation}
+y = \heaviside(x - \threshold)
+\label{eq:ste_forward}
+\end{equation}
+where $x$ denotes the membrane potential, $\threshold$ denotes the firing threshold, and $y \in \{0, 1\}$ denotes the spike output.
+
+\paragraph{Backward Pass}
+The backward pass treats $\heaviside$ as identity for gradient computation as given by Equation~\ref{eq:ste_backward}:
+
+\begin{equation}
+\frac{\partial L}{\partial x} = \frac{\partial L}{\partial y} \cdot \frac{\partial y}{\partial x} \approx \frac{\partial L}{\partial y} \cdot 1 = \frac{\partial L}{\partial y}
+\label{eq:ste_backward}
+\end{equation}
+where $L$ denotes the loss function and the gradient passes through unchanged.
+
+\subsubsection{Training Modes}
+
+MofNeuroSim supports multiple training modes through the \texttt{TrainingMode} enumeration:
+
+\begin{itemize}
+    \item \textbf{TrainingMode.NONE}: Pure inference mode (default). No gradient tracking.
+    \item \textbf{TrainingMode.STE}: Bit-exact STE training. Forward and backward use SNN components with STE gradients.
+    \item \textbf{TrainingMode.TEMPORAL}: Temporal dynamics training (future extension). Exploits spike timing for learning.
+\end{itemize}
+
+\subsubsection{Pure Pulse Architecture}
+
+In STE training mode, the entire computation graph operates in the pulse domain as illustrated by Equation~\ref{eq:pulse_graph}:
+
+\begin{equation}
+\text{Float} \xrightarrow{\text{encode}} \pulse{x} \xrightarrow{\text{SNN}} \pulse{y} \xrightarrow{\text{decode}} \text{Float} \xrightarrow{\text{loss}} \mathcal{L}
+\label{eq:pulse_graph}
+\end{equation}
+where $\pulse{x}$ denotes the pulse-encoded input, $\pulse{y}$ denotes the pulse-encoded output, and $\mathcal{L}$ denotes the loss value.
+
+\paragraph{Weight Storage}
+Weights are stored directly as pulse sequences as given by Equation~\ref{eq:train_weight}:
+
+\begin{equation}
+\pulse{\mathbf{W}} \in \{0,1\}^{D_{out} \times D_{in} \times n}
+\label{eq:train_weight}
+\end{equation}
+where $\pulse{\mathbf{W}}$ denotes the pulse-encoded weight tensor, $D_{out}$ denotes the output dimension, $D_{in}$ denotes the input dimension, and $n$ denotes the bit width. This is a trainable parameter with gradients computed through STE.
+
+\paragraph{Boundary Operations}
+Encoding and decoding occur only at system boundaries:
+
+\begin{itemize}
+    \item \textbf{Input encoding}: $\pulse{x} = \text{encode}(x)$ at model input
+    \item \textbf{Output decoding}: $y = \text{decode}(\pulse{y})$ at model output for loss computation
+\end{itemize}
+
+The \texttt{ste\_decode} function performs decoding with gradient passthrough as given by Equation~\ref{eq:ste_decode}:
+
+\begin{equation}
+\text{ste\_decode}(\pulse{x}) = \text{decode}(\pulse{x}), \quad \frac{\partial}{\partial \pulse{x}} = \text{encode}(\nabla_y)
+\label{eq:ste_decode}
+\end{equation}
+where $\pulse{x}$ denotes the pulse input, $\text{decode}(\cdot)$ denotes the decoding function, and $\nabla_y$ denotes the gradient of the loss with respect to the output.
+
+\subsubsection{PulseSGD Optimizer}
+
+We introduce PulseSGD, a gradient descent optimizer that operates entirely in the pulse domain as given by Equation~\ref{eq:pulse_sgd}:
+
+\begin{equation}
+\pulse{\mathbf{W}}^{(t+1)} = \pulse{\mathbf{W}}^{(t)} - \eta \cdot \pulse{\nabla \mathcal{L}}
+\label{eq:pulse_sgd}
+\end{equation}
+where $\pulse{\mathbf{W}}^{(t)}$ denotes the pulse-encoded weights at iteration $t$, $\eta$ denotes the learning rate, and $\pulse{\nabla \mathcal{L}}$ denotes the pulse-encoded gradient.
+
+\paragraph{Algorithm}
+The update proceeds as: decode current weights ($\mathbf{W} = \text{decode}(\pulse{\mathbf{W}})$), decode gradients ($\nabla \mathcal{L} = \text{decode}(\pulse{\nabla \mathcal{L}})$), compute update ($\mathbf{W}' = \mathbf{W} - \eta \cdot \nabla \mathcal{L}$), then encode new weights ($\pulse{\mathbf{W}}' = \text{encode}(\mathbf{W}')$).
+
+\paragraph{Momentum Extension}
+PulseSGD with momentum is given by Equation~\ref{eq:pulse_momentum}:
+
+\begin{align}
+\mathbf{v}^{(t+1)} &= \beta \mathbf{v}^{(t)} + \nabla \mathcal{L}^{(t)} \nonumber \\
+\pulse{\mathbf{W}}^{(t+1)} &= \pulse{\mathbf{W}}^{(t)} - \eta \cdot \text{encode}(\mathbf{v}^{(t+1)})
+\label{eq:pulse_momentum}
+\end{align}
+where $\mathbf{v}^{(t)}$ denotes the velocity at iteration $t$, $\beta$ denotes the momentum coefficient, $\nabla \mathcal{L}^{(t)}$ denotes the gradient at iteration $t$, $\eta$ denotes the learning rate, and $\text{encode}(\cdot)$ denotes the pulse encoding function.
+
+\subsubsection{Gradient Flow Through SNN Layers}
+
+\paragraph{Linear Layer}
+For $y = \mathbf{x}^T \mathbf{w}$, the gradients are computed as given by Equation~\ref{eq:linear_grad}:
+
+\begin{align}
+\frac{\partial \mathcal{L}}{\partial \mathbf{w}} &= \mathbf{x} \cdot \frac{\partial \mathcal{L}}{\partial y} \nonumber \\
+\frac{\partial \mathcal{L}}{\partial \mathbf{x}} &= \mathbf{w} \cdot \frac{\partial \mathcal{L}}{\partial y}
+\label{eq:linear_grad}
+\end{align}
+where $\mathcal{L}$ denotes the loss, $\mathbf{w}$ denotes the weight vector, $\mathbf{x}$ denotes the input vector, $y$ denotes the output, and $\frac{\partial \mathcal{L}}{\partial y}$ denotes the upstream gradient. These matrix multiplications use the same SNN operators as forward pass.
+
+\paragraph{Activation Functions}
+Activation gradients are computed using SNN arithmetic:
+
+\begin{itemize}
+    \item \textbf{Sigmoid}: $\sigma'(x) = \sigma(x)(1 - \sigma(x))$
+    \item \textbf{Tanh}: $\tanh'(x) = 1 - \tanh^2(x)$
+    \item \textbf{GELU}: $\text{GELU}'(x) = \sigma(1.702x) + 1.702x \cdot \sigma(1.702x)(1 - \sigma(1.702x))$
+    \item \textbf{ReLU}: $\text{ReLU}'(x) = \heaviside(x)$
+\end{itemize}
+
+\subsubsection{Training Loop}
+
+A typical training iteration proceeds as: reset membrane potentials in all stateful modules, encode input batch to pulse format ($\pulse{\mathbf{x}}$), forward propagate through SNN layers ($\pulse{\mathbf{y}}$), decode output to float ($\mathbf{y}$) for loss computation ($\mathcal{L}$), backward propagate gradients with STE, then apply PulseSGD to update pulse weights.
+
+\subsubsection{Convergence Properties}
+
+The STE approximation introduces a bias in gradient estimates. However, empirical results show that training converges for standard architectures, final accuracy approaches float-trained models, and bit-exact inference is preserved after training.
+
+\subsubsection{Parameter Access}
+
+Trainable modules provide the \texttt{pulse\_parameters()} method to access pulse-format parameters as given by Equation~\ref{eq:pulse_params}:
+
+\begin{equation}
+\texttt{pulse\_parameters()} \rightarrow \{\pulse{\mathbf{W}}, \pulse{\mathbf{b}}, \ldots\}
+\label{eq:pulse_params}
+\end{equation}
+where $\pulse{\mathbf{W}}$ denotes the pulse-encoded weights and $\pulse{\mathbf{b}}$ denotes the pulse-encoded biases.
+
+This is analogous to PyTorch's \texttt{parameters()} but returns pulse tensors for use with PulseSGD.
+
+\subsubsection{Future Extensions}
+
+\paragraph{Temporal Training Mode}
+The TEMPORAL training mode will exploit spike timing dynamics including Spike-Timing-Dependent Plasticity (STDP), temporal credit assignment, and online learning rules.
+
+\paragraph{Hardware-Aware Training}
+Quantization-aware training for specific neuromorphic hardware addresses weight precision constraints, neuron count budgets, and power consumption optimization.
+

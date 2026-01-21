@@ -1,0 +1,140 @@
+%%%%%%%% ICML 2026 SUBMISSION FILE %%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+% Recommended packages
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+% Attempt to make hyperref and algorithmic work together better:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Use the following line for the initial blind version submitted for review:
+% \usepackage{icml2026}
+
+% Use the following line for the camera-ready version (with author names):
+\usepackage[accepted]{icml2026}
+
+% Math packages
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+
+% Cleveref for cross-references
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% CUSTOM COMMANDS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newcommand{\pulse}[1]{\mathbf{P}_{#1}}
+\newcommand{\spike}{\mathbf{s}}
+\newcommand{\membrane}{V}
+\newcommand{\threshold}{\theta}
+\newcommand{\heaviside}{H}
+
+% Short title for running head
+\icmltitlerunning{MofNeuroSim: Bit-Exact Floating-Point via Pure SNNs}
+
+\begin{document}
+
+\twocolumn[
+  \icmltitle{MofNeuroSim: Bit-Exact IEEE Floating-Point Arithmetic \\
+    via Pure Spiking Neural Networks}
+
+  \icmlsetsymbol{equal}{*}
+
+  \begin{icmlauthorlist}
+    \icmlauthor{Zhengzheng Tang}{bu}
+  \end{icmlauthorlist}
+
+  \icmlaffiliation{bu}{Boston University, Boston, MA, USA}
+  \icmlcorrespondingauthor{Zhengzheng Tang}{zztangbu@bu.edu}
+
+  \icmlkeywords{Spiking Neural Networks, Neuromorphic Computing, Floating-Point Arithmetic, GLIF Neurons}
+
+  \vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}
+
+\begin{abstract}
+We present MofNeuroSim, a framework that implements IEEE 754 floating-point arithmetic entirely through spiking neural networks (SNNs) using Generalized Leaky Integrate-and-Fire (GLIF) neurons. Unlike conventional neuromorphic approaches that trade precision for efficiency, our method achieves \textbf{bit-exact} results by encoding floating-point numbers as binary pulse sequences and implementing all arithmetic operations through SNN logic gates. For FP16, FP32, and FP64, we achieve 0 ULP error---our results are bit-identical to IEEE 754 machine precision; for FP8, bit-exactness is achieved within the format's intrinsic limits. We prove that GLIF networks with soft reset and dynamic thresholds construct differential topological embeddings, establishing that GLIF neurons are mathematically equivalent to complex Hodgkin-Huxley neurons in computational capability---not a simplification. Our framework supports addition, multiplication, division, square root, and activation functions (Sigmoid, Tanh, GELU, Softmax). We further demonstrate end-to-end trainability via Straight-Through Estimator (STE) with a custom PulseSGD optimizer, and validate robustness under physical hardware conditions through LIF mode simulation.
+\end{abstract}
+
+%==============================================================================
+% INTRODUCTION
+%==============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\input{sections/introduction}
+
+%==============================================================================
+% RELATED WORK
+%==============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\input{sections/related_work}
+
+%==============================================================================
+% METHODS SECTION
+%==============================================================================
+
+\section{Methods}
+\label{sec:methods}
+
+This section presents the mathematical foundations and SNN implementations of each component in MofNeuroSim. We first establish the theoretical basis for bit-exact computation using GLIF neurons, then organize the presentation hierarchically: from basic neuron models and logic gates, through arithmetic operations, to complete neural network layers.
+
+\input{sections/00_theory}
+\input{sections/01_overview}
+\input{sections/02_encoding}
+\input{sections/03_basic_gates}
+\input{sections/04_arithmetic}
+\input{sections/05_activation}
+\input{sections/06_linear}
+\input{sections/07_normalization}
+\input{sections/08_attention}
+\input{sections/09_training}
+
+%==============================================================================
+% EXPERIMENTS
+%==============================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\input{sections/experiments}
+
+%==============================================================================
+% CONCLUSION
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+\input{sections/conclusion}
+
+%==============================================================================
+% REFERENCES
+%==============================================================================
+
+\bibliography{refs}
+\bibliographystyle{icml2026}
+
+\end{document}

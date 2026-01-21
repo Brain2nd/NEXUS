@@ -1,0 +1,117 @@
+%==============================================================================
+% SECTION 6: LINEAR LAYER
+%==============================================================================
+
+\subsection{Linear Layer}
+\label{sec:linear}
+
+This section describes the implementation of fully-connected (linear) layers using SNN arithmetic operators. The linear layer is the fundamental building block of neural networks.
+
+\subsubsection{Mathematical Definition}
+
+A linear layer computes the affine transformation given by Equation~\ref{eq:linear}:
+
+\begin{equation}
+\mathbf{Y} = \mathbf{X} \mathbf{W}^T + \mathbf{b}
+\label{eq:linear}
+\end{equation}
+where $\mathbf{X} \in \mathbb{R}^{B \times S \times D_{in}}$ denotes the input tensor (with batch size $B$, sequence length $S$, input dimension $D_{in}$), $\mathbf{W} \in \mathbb{R}^{D_{out} \times D_{in}}$ denotes the weight matrix, $\mathbf{b} \in \mathbb{R}^{D_{out}}$ denotes the optional bias vector, and $\mathbf{Y} \in \mathbb{R}^{B \times S \times D_{out}}$ denotes the output tensor.
+
+\subsubsection{Element-wise Computation}
+
+Each output element is computed as a dot product given by Equation~\ref{eq:linear_elem}:
+
+\begin{equation}
+y_{b,s,j} = \sum_{i=1}^{D_{in}} x_{b,s,i} \cdot w_{j,i} + b_j
+\label{eq:linear_elem}
+\end{equation}
+where $y_{b,s,j}$ denotes the output at batch index $b$, sequence position $s$, output dimension $j$; $x_{b,s,i}$ denotes the corresponding input element; $w_{j,i}$ denotes the weight connecting input $i$ to output $j$; and $b_j$ denotes the bias for output $j$.
+
+\subsubsection{SNN Implementation}
+
+\paragraph{Weight Storage}
+Weights are stored in pulse format as given by Equation~\ref{eq:weight_pulse}:
+
+\begin{equation}
+\pulse{\mathbf{W}} \in \{0,1\}^{D_{out} \times D_{in} \times n}
+\label{eq:weight_pulse}
+\end{equation}
+where $\pulse{\mathbf{W}}$ denotes the pulse representation of the weight matrix, $D_{out}$ and $D_{in}$ denote the output and input dimensions, and $n$ denotes the bit width (32 for FP32, 16 for FP16, etc.).
+
+\paragraph{Computation Flow}
+For each output element: multiply input and weight pulses ($\pulse{x_i} \times \pulse{w_{j,i}}$) using SNN multiplier, accumulate products ($\sum_i x_i w_{j,i}$) using SNN adder, then add bias ($+\pulse{b_j}$) if present.
+
+\paragraph{Accumulation Precision}
+To maintain numerical accuracy during summation, we use higher-precision accumulation:
+
+\begin{itemize}
+    \item \textbf{FP8 inputs}: Accumulate in FP32 (23-bit mantissa)
+    \item \textbf{FP16 inputs}: Accumulate in FP32 (23-bit mantissa)
+    \item \textbf{FP32 inputs}: Accumulate in FP64 (52-bit mantissa)
+\end{itemize}
+
+This prevents precision loss when summing many small products.
+
+\subsubsection{Multi-Precision Support}
+
+The linear layer supports multiple precision modes. The module interface is given by Equation~\ref{eq:linear_interface}:
+
+\begin{equation}
+\text{SpikeFPn\_Linear}(D_{in}, D_{out}, \text{accum}=\text{FP}m)
+\label{eq:linear_interface}
+\end{equation}
+where $D_{in}$ denotes the input dimension, $D_{out}$ denotes the output dimension, and $\text{accum}$ denotes the accumulation precision. Available configurations:
+
+\begin{table}[t]
+\centering
+\caption{Linear Layer Precision Configurations}
+\label{tab:linear_precision}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Module} & \textbf{In} & \textbf{Wt} & \textbf{Acc} \\
+\midrule
+SpikeFP8Linear & FP8 & FP8 & FP32 \\
+SpikeFP16Linear & FP16 & FP16 & FP32 \\
+SpikeFP32Linear & FP32 & FP32 & FP64 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Embedding Layer}
+
+The embedding layer is a special case of the linear layer that performs lookup rather than matrix multiplication. The embedding operation is given by Equation~\ref{eq:embedding}:
+
+\begin{equation}
+\mathbf{Y} = \text{Embedding}(\mathbf{X}) = \mathbf{W}[\mathbf{X}]
+\label{eq:embedding}
+\end{equation}
+where $\mathbf{X}$ denotes the input tensor containing integer indices, $\mathbf{W}$ denotes the embedding table, and $\mathbf{Y}$ denotes the output tensor of embedded vectors.
+
+\paragraph{SNN Implementation}
+The embedding lookup proceeds as: decode index $i$ to one-hot vector ($\mathbf{e}_i$) using SNN comparators, select row $\mathbf{W}_i$ using MUX gates, then output the selected embedding in pulse format.
+
+\subsubsection{Batched Operations}
+
+For efficient batch processing, all computations are parallelized across the batch dimension $B$, sequence dimension $S$, and output dimension $D_{out}$. The innermost loop over $D_{in}$ is serialized to accumulate products.
+
+\subsubsection{Memory Layout}
+
+Pulse tensors use the memory layout given by Equation~\ref{eq:pulse_layout}:
+
+\begin{equation}
+\pulse{\mathbf{X}} : (\text{batch}, \text{seq}, \text{features}, \text{bits})
+\label{eq:pulse_layout}
+\end{equation}
+where $\pulse{\mathbf{X}}$ denotes the pulse tensor, $\text{batch}$ denotes the batch dimension, $\text{seq}$ denotes the sequence dimension, $\text{features}$ denotes the feature dimension, and $\text{bits}$ denotes the bit dimension. This layout enables efficient vectorized operations along the bit dimension.
+
+\subsubsection{State Management}
+
+Linear layers using iterative accumulation maintain internal state (membrane potentials in the accumulator). The \texttt{reset()} method clears this state before processing new sequences as given by Equation~\ref{eq:reset_state}:
+
+\begin{equation}
+\membrane_{\text{accum}} \leftarrow 0
+\label{eq:reset_state}
+\end{equation}
+where $\membrane_{\text{accum}}$ denotes the accumulator membrane potential. This is essential for correct computation when processing multiple independent sequences.
+

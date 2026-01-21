@@ -1,0 +1,47 @@
+%==============================================================================
+% CONCLUSION
+%==============================================================================
+
+We have presented MofNeuroSim, a framework that fundamentally challenges the long-held assumption that spiking neural networks are inherently approximate computational models. By proving the GLIF Topological Embedding Theorem and implementing a complete IEEE 754 floating-point arithmetic system through pure SNN operations, we demonstrate that SNNs can achieve \textbf{bit-exact computation} while retaining their energy-efficient, event-driven characteristics.
+
+\subsection{Key Contributions}
+
+Our work makes several fundamental contributions:
+
+\begin{enumerate}
+    \item \textbf{Theoretical Foundation}: The GLIF Topological Embedding Theorem establishes that GLIF networks with soft reset and dynamic thresholds create deterministic, chaos-free computation spaces. This theorem proves GLIF neurons are topologically equivalent to complex Hodgkin-Huxley neurons, demonstrating that our choice of GLIF is not a simplification sacrificing biological realism but an optimal theoretical choice.
+
+    \item \textbf{Complete Arithmetic System}: We construct a hierarchical architecture from GLIF neurons through logic gates, arithmetic units, to full IEEE 754 operators supporting FP8, FP16, FP32, and FP64 precisions. For FP16/32/64, we achieve 0 ULP error (bit-identical to IEEE 754 machine precision); for FP8, bit-exactness is achieved within the format's intrinsic limits.
+
+    \item \textbf{Neural Network Layers}: Beyond basic arithmetic, we implement complete neural network components including Linear layers, LayerNorm, RMSNorm, Multi-Head Attention with RoPE, and activation functions (Sigmoid, Tanh, GELU, Softmax).
+
+    \item \textbf{Training Capability}: Through STE and PulseSGD, we enable end-to-end gradient-based training in the pulse domain while preserving bit-exact inference.
+
+    \item \textbf{Hardware Robustness}: The topological embedding theorem extends to LIF mode ($\beta < 1$), providing theoretical guarantees for stable computation under physical hardware imperfections.
+\end{enumerate}
+
+\subsection{Implications}
+
+MofNeuroSim opens the door to \textbf{general-purpose neuromorphic computing}. Any algorithm expressible in IEEE 754 floating-point arithmetic can, in principle, be implemented on MofNeuroSim and deployed on neuromorphic hardware with the energy efficiency benefits of event-driven, spike-based computation.
+
+The framework name ``MofNeuroSim'' reflects our vision of deep integration with Metal-Organic Framework (MOF) materials---emerging substrates for next-generation neuromorphic hardware. MOF memristors and similar devices provide the physical foundation for high-density, low-power neuromorphic chips. MofNeuroSim provides the ``algorithmic soul'' for these platforms: a complete, trainable, and physically robust computational framework that bridges the gap between software algorithms and material hardware.
+
+\subsection{Limitations and Future Work}
+
+Several directions remain for future exploration:
+
+\begin{itemize}
+    \item \textbf{Hardware Deployment}: Mapping MofNeuroSim to physical neuromorphic chips (e.g., Intel Loihi, SpiNNaker) and MOF-based memristive devices.
+
+    \item \textbf{Temporal Training}: Implementing the reserved \texttt{TrainingMode.TEMPORAL} interface with STDP and other neuromorphic learning rules.
+
+    \item \textbf{Efficiency Optimization}: Reducing neuron count and time steps through architectural innovations while maintaining bit-exactness.
+
+    \item \textbf{Extended Precision}: Supporting higher precisions (FP128) and specialized formats for scientific computing.
+
+    \item \textbf{Large-Scale Models}: Scaling to full-size Transformer models for practical applications.
+\end{itemize}
+
+\subsection{Conclusion}
+
+By proving that SNNs can perform bit-exact IEEE 754 arithmetic, we establish a new paradigm for neuromorphic computing. MofNeuroSim demonstrates that the perceived trade-off between biological plausibility and computational precision is a false dichotomy. SNNs can simultaneously be brain-inspired, energy-efficient, trainable, and mathematically exact. This work lays the foundation for the next generation of general-purpose neuromorphic computing systems.

@@ -1,0 +1,45 @@
+%==============================================================================
+% RELATED WORK
+%==============================================================================
+
+\subsection{Neuromorphic Computing and SNNs}
+
+Neuromorphic computing has emerged as a promising paradigm for energy-efficient computation~\citep{schuman2017survey,shrestha2022survey}. Spiking Neural Networks (SNNs) process information through discrete spike events rather than continuous activations, enabling event-driven computation with potential orders of magnitude improvement in energy efficiency~\citep{kudithipudi2025neuromorphic}. Comprehensive reviews of SNN architectures and applications are provided by \citet{yamazaki2022spiking}, \citet{rathi2023exploring}, and \citet{malcolm2023comprehensive}. Hardware implementations such as Intel's Loihi demonstrate the practical viability of neuromorphic processors~\citep{davies2021advancing}.
+
+Despite these advances, SNNs have been predominantly applied to pattern recognition and sensory processing tasks, with limited exploration of general-purpose computation. The perception of SNNs as inherently approximate computational models has restricted their application in domains requiring high-precision arithmetic.
+
+\subsection{Floating-Point Arithmetic in Neuromorphic Systems}
+
+Several works have explored implementing IEEE 754 floating-point operations on neuromorphic hardware. \citet{george2019ieee} proposed neuromorphic implementations of floating-point addition, while \citet{dubey2020floating} addressed floating-point multiplication. \citet{wurm2023arithmetic} presented arithmetic primitives for efficient neuromorphic computing, and \citet{mikaitis2020arithmetic} explored accelerators for transcendental functions in digital neuromorphic processors. \citet{kwak2021precision} investigated precision requirements for floating-point arithmetic in SNNs.
+
+However, these prior works typically focus on individual operations or use hybrid approaches combining neuromorphic and traditional computing elements. None provides a complete, bit-exact implementation of IEEE 754 arithmetic across all precisions (FP8/16/32/64) with full neural network layer support, nor establishes theoretical foundations for why such precision is achievable.
+
+\subsection{Neuron Models: LIF and GLIF}
+
+The Leaky Integrate-and-Fire (LIF) model is the most widely used spiking neuron model due to its computational simplicity and biological plausibility~\citep{lu2022linear}. \citet{teeter2018generalized} introduced the Generalized LIF (GLIF) framework, demonstrating that a family of models with increasing complexity can capture diverse neural behaviors. \citet{yao2022glif} proposed a gated GLIF variant for deep SNNs, while \citet{marasco2023adaptive} developed adaptive GLIF models for specific neuron types.
+
+Our work extends the GLIF framework by proving that GLIF neurons with soft reset and dynamic thresholds are topologically equivalent to more complex Type II neurons (e.g., Hodgkin-Huxley), establishing that GLIF is not a simplification but a theoretically optimal choice for bit-exact computation.
+
+\subsection{Dynamical Systems and Topological Perspectives}
+
+The dynamical systems perspective on SNNs has received increasing attention. \citet{zhang2021bifurcation} analyzed spiking neural models through bifurcation theory, revealing fundamental dynamical properties. \citet{wei2025physics} developed physics-informed SNNs for continuous-time systems. From a topological viewpoint, \citet{papamarkou2024position} advocated topological deep learning for understanding neural network structure, while \citet{suresh2024characterizing} studied embedding space evolution using algebraic topology.
+
+Our topological embedding theorem draws from these perspectives but focuses specifically on proving that GLIF networks create deterministic, chaos-free computation spaces homeomorphic to high-dimensional tori, providing theoretical guarantees for bit-exact arithmetic.
+
+\subsection{SNN Training Methods}
+
+Training SNNs is challenging due to the non-differentiability of spike generation. Surrogate gradient methods~\citep{neftci2019surrogate,zenke2021remarkable} address this by replacing the discontinuous spike function with smooth surrogates during backpropagation. The Straight-Through Estimator (STE) is a particular surrogate that treats the gradient of the step function as identity~\citep{yin2019understanding,chen2024memristive}.
+
+Temporal backpropagation methods~\citep{guo2023efficient,meng2023towards} propagate gradients through time steps but face memory and computational challenges. Our approach uses STE for training while preserving bit-exact forward computation, with a reserved interface for future temporal training modes.
+
+\subsection{Spiking Transformers and Attention}
+
+Recent work has adapted attention mechanisms and Transformer architectures to SNNs. \citet{yao2022attention} proposed multi-dimensional attention for SNNs, demonstrating effectiveness across various tasks. \citet{liu2022enhancing} developed hybrid top-down attention mechanisms. For full Transformer architectures, \citet{yao2024spike} introduced Spike-driven Transformer V2 with a meta-architecture design, and \citet{li2024spikeformer} proposed Spikeformer achieving competitive performance with ANNs.
+
+These works typically use rate-coded representations and approximate computations. In contrast, MofNeuroSim implements attention mechanisms with bit-exact IEEE 754 arithmetic, including Linear layers, LayerNorm/RMSNorm, Softmax, and Rotary Position Embeddings (RoPE).
+
+\subsection{Encoding and Normalization}
+
+Encoding continuous values into spike trains is fundamental to SNN computation. \citet{date2023encoding} proposed virtual neuron abstractions for encoding integers and rationals. For normalization, Layer Normalization~\citep{ba2016layer} has become standard in Transformers, with \citet{shao2020normalization} analyzing its necessity in deep networks.
+
+Our SAR-ADC inspired encoding with dynamic thresholds provides optimal information extraction per time step, while our normalization implementations (LayerNorm, RMSNorm) achieve bit-exact IEEE 754 compliance through pure SNN operations.
