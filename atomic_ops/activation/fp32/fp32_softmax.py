@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 
 from atomic_ops.core.training_mode import TrainingMode
+from atomic_ops.core.accumulator import create_accumulator
 from .fp32_exp import SpikeFP32Exp
 from atomic_ops.arithmetic.fp32.fp32_adder import SpikeFP32Adder
 from atomic_ops.arithmetic.fp32.fp32_div import SpikeFP32Divider
@@ -28,29 +29,34 @@ class SpikeFP32Softmax(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         training_mode: 训练模式 (None/TrainingMode.STE/TrainingMode.TEMPORAL)（梯度流过）
+        accumulator_mode: 累加模式 ('sequential' 或 'parallel')
     """
-    def __init__(self, neuron_template=None, training_mode=None):
+    def __init__(self, neuron_template=None, training_mode=None, accumulator_mode='sequential'):
         super().__init__()
         self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
-        
+
         self.exp = SpikeFP32Exp(neuron_template=nt)
         self.adder = SpikeFP32Adder(neuron_template=nt)
         self.divider = SpikeFP32Divider(neuron_template=nt)
-        
+
+        # 使用解耦的累加器
+        self.accumulator = create_accumulator(self.adder, mode=accumulator_mode)
+
     def forward(self, x):
         """
         x: [..., N, 32] FP32脉冲
         Returns: Softmax(x) [..., N, 32] FP32脉冲
         """
-        N = x.shape[-2]
-
         # SNN 前向 (纯门电路)
         with torch.no_grad():
+            # 1. exp(x) for all elements
             exp_x = self.exp(x)
-            sum_exp = exp_x[..., 0, :]
-            for i in range(1, N):
-                sum_exp = self.adder(sum_exp, exp_x[..., i, :])
+
+            # 2. sum(exp(x)) using decoupled accumulator
+            sum_exp = self.accumulator.reduce(exp_x, dim=-2)
+
+            # 3. Broadcast sum and divide
             sum_exp_expanded = sum_exp.unsqueeze(-2).expand_as(exp_x)
             out_pulse = self.divider(exp_x, sum_exp_expanded)
 
@@ -61,9 +67,10 @@ class SpikeFP32Softmax(nn.Module):
             return ste_softmax(x, out_pulse, dim=-2)
 
         return out_pulse
-    
+
     def reset(self):
         self.exp.reset()
         self.adder.reset()
+        self.accumulator.reset()
         self.divider.reset()
 

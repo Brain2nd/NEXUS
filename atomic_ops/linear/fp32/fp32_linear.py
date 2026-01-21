@@ -77,6 +77,7 @@ import torch
 import torch.nn as nn
 
 from atomic_ops.core.training_mode import TrainingMode
+from atomic_ops.core.accumulator import SequentialAccumulator, ParallelAccumulator
 from atomic_ops.arithmetic.fp32.fp32_mul import SpikeFP32Multiplier
 from atomic_ops.arithmetic.fp32.fp32_adder import SpikeFP32Adder
 from atomic_ops.arithmetic.fp64.fp64_adder import SpikeFP64Adder
@@ -96,6 +97,9 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
         accum_precision: 中间累加精度，'fp32' / 'fp64'
             - 'fp32': FP32累加 → FP32输出（与PyTorch一致，推荐）
             - 'fp64': FP64累加 → FP32输出（更高精度）
+        accum_mode: 累加策略，'sequential' / 'parallel'
+            - 'sequential': 顺序累加，O(n)，位精确确定性（默认）
+            - 'parallel': 树形归约，O(log n)，快速
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         training_mode: 训练模式
             - None (默认): 纯推理模式，权重为 buffer
@@ -106,13 +110,17 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
         输入[FP32] → FP32×FP32→FP32乘法 → 累加[accum_precision] → 输出[FP32]
     """
     def __init__(self, in_features, out_features, accum_precision='fp32',
-                 neuron_template=None, training_mode=None):
+                 accum_mode='sequential', neuron_template=None, training_mode=None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.accum_precision = accum_precision
+        self.accum_mode = accum_mode
         self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
+
+        # 选择 Accumulator 类
+        AccumulatorClass = ParallelAccumulator if accum_mode == 'parallel' else SequentialAccumulator
 
         # FP32 乘法器 (逐元素乘法，共享)
         self.mul = SpikeFP32Multiplier(neuron_template=nt)
@@ -121,13 +129,17 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
             # FP64 累加模式
             # FP32 → FP64 转换器
             self.fp32_to_fp64 = FP32ToFP64Converter(neuron_template=nt)
-            # FP64 累加器 (单实例，动态扩展机制支持复用)
+            # FP64 加法器
             self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
+            # FP64 累加器
+            self.fp64_accumulator = AccumulatorClass(self.fp64_adder)
             # FP64 → FP32 输出转换器
             self.output_converter = FP64ToFP32Converter(neuron_template=nt)
         else:
-            # FP32 累加模式 (单实例，动态扩展机制支持复用)
+            # FP32 累加模式
             self.fp32_adder = SpikeFP32Adder(neuron_template=nt)
+            # FP32 累加器
+            self.fp32_accumulator = AccumulatorClass(self.fp32_adder)
 
         # 脉冲权重
         if TrainingMode.is_ste(self.training_mode):
@@ -228,26 +240,16 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
 
     def _fp32_accumulate(self, products_fp32):
         """FP32 累加：FP32累加 → 输出FP32脉冲"""
-        # 第一个乘积
-        acc = products_fp32[..., 0, :]
-
-        # 逐个累加（单实例复用）
-        for i in range(1, self.in_features):
-            acc = self.fp32_adder(acc, products_fp32[..., i, :])
-
-        return acc
+        # 使用 Accumulator 进行归约，dim=-2 是 in_features 维度
+        return self.fp32_accumulator.reduce(products_fp32, dim=-2)
 
     def _fp64_accumulate(self, products_fp32):
         """FP64 累加：FP32→FP64 → FP64累加 → FP64→FP32 → 输出FP32脉冲"""
         # 转换所有乘积到 FP64
         products_fp64 = self.fp32_to_fp64(products_fp32)
 
-        # 第一个乘积
-        acc = products_fp64[..., 0, :]
-
-        # 逐个累加（单实例复用）
-        for i in range(1, self.in_features):
-            acc = self.fp64_adder(acc, products_fp64[..., i, :])
+        # 使用 Accumulator 进行归约
+        acc = self.fp64_accumulator.reduce(products_fp64, dim=-2)
 
         # 转换回 FP32 输出
         return self.output_converter(acc)

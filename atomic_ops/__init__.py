@@ -41,6 +41,16 @@ from .core.spike_mode import SpikeMode
 # TrainingMode 训练模式枚举
 from .core.training_mode import TrainingMode
 
+# Accumulator 累加器 (解耦的归约策略)
+from .core.accumulator import (
+    Accumulator,
+    SequentialAccumulator,
+    ParallelAccumulator,
+    PartialProductAccumulator,
+    create_accumulator,
+    create_partial_product_accumulator,
+)
+
 # STE (Straight-Through Estimator) for SNN training
 from .core.ste import (
     # Autograd Functions

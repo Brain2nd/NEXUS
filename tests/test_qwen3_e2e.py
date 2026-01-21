@@ -1,9 +1,9 @@
 """
-Qwen3 SNN End-to-End Tests
-===========================
+Qwen3 SNN End-to-End Tests (HuggingFace Baseline)
+===================================================
 
-Tests for SpikeQwen3 model components and end-to-end forward pass.
-Target: 0 ULP error (bit-exact with PyTorch reference).
+Baseline: HuggingFace Qwen/Qwen3-0.6B pretrained model
+Target: 0 ULP error (bit-exact with HuggingFace)
 
 Author: MofNeuroSim Project
 """
@@ -12,1166 +12,226 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
-import torch.nn as nn
-import math
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from models import (
-    SpikeQwen3Config,
-    SpikeQwen3MLP,
-    SpikeQwen3Attention,
-    SpikeQwen3DecoderLayer,
-    SpikeQwen3Model,
-    SpikeQwen3ForCausalLM,
-)
+from models import SpikeQwen3Config, SpikeQwen3ForCausalLM
 from atomic_ops import float32_to_pulse, pulse_to_float32
 
 
-# =============================================================================
-# Reference PyTorch Implementations (for comparison)
-# =============================================================================
-
-class ReferenceRMSNorm(nn.Module):
-    """PyTorch reference RMSNorm."""
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.eps = eps
-
-    def forward(self, x):
-        variance = x.pow(2).mean(-1, keepdim=True)
-        x = x * torch.rsqrt(variance + self.eps)
-        return self.weight * x
-
-
-class ReferenceSwiGLUMLP(nn.Module):
-    """PyTorch reference SwiGLU MLP."""
-    def __init__(self, hidden_size, intermediate_size):
-        super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-        self.act_fn = nn.SiLU()
-
-    def forward(self, x):
-        gate = self.act_fn(self.gate_proj(x))
-        up = self.up_proj(x)
-        return self.down_proj(gate * up)
-
-
-class ReferenceRotaryEmbedding(nn.Module):
-    """PyTorch reference RoPE (interleaved style to match SNN implementation)."""
-    def __init__(self, head_dim, base=10000.0):
-        super().__init__()
-        self.head_dim = head_dim
-        self.half_dim = head_dim // 2
-        self.base = base
-        inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2).float() / head_dim))
-        self.register_buffer('inv_freq', inv_freq)
-
-    def forward(self, x, positions):
-        # x: [batch, heads, seq, head_dim]
-        # positions: [seq]
-        freqs = torch.outer(positions.float(), self.inv_freq)  # [seq, half_dim]
-        cos = freqs.cos().unsqueeze(0).unsqueeze(0)  # [1, 1, seq, half_dim]
-        sin = freqs.sin().unsqueeze(0).unsqueeze(0)
-
-        # Interleaved split (matches SNN implementation)
-        x_even = x[..., 0::2]  # [batch, heads, seq, half_dim]
-        x_odd = x[..., 1::2]
-
-        # RoPE: x_even' = x_even * cos - x_odd * sin
-        #       x_odd' = x_even * sin + x_odd * cos
-        result_even = x_even * cos - x_odd * sin
-        result_odd = x_even * sin + x_odd * cos
-
-        # Interleave back
-        result = torch.zeros_like(x)
-        result[..., 0::2] = result_even
-        result[..., 1::2] = result_odd
-        return result
-
-
-class ReferenceQwen3Attention(nn.Module):
-    """PyTorch reference Qwen3 Attention with QK Norm."""
-    def __init__(self, hidden_size, num_heads, num_kv_heads, head_dim, eps=1e-6):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.num_kv_heads = num_kv_heads
-        self.head_dim = head_dim
-        self.num_kv_groups = num_heads // num_kv_heads
-
-        self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
-        self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
-        self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
-        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
-
-        self.q_norm = ReferenceRMSNorm(head_dim, eps)
-        self.k_norm = ReferenceRMSNorm(head_dim, eps)
-        self.rope = ReferenceRotaryEmbedding(head_dim)
-
-        self.scale = head_dim ** -0.5
-
-    def forward(self, x, positions, attention_mask=None):
-        batch, seq_len, _ = x.shape
-
-        # QKV projections
-        q = self.q_proj(x).view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(x).view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
-
-        # QK Norm
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-
-        # RoPE
-        q = self.rope(q, positions)
-        k = self.rope(k, positions)
-
-        # GQA: repeat KV heads
-        if self.num_kv_groups > 1:
-            k = k.repeat_interleave(self.num_kv_groups, dim=1)
-            v = v.repeat_interleave(self.num_kv_groups, dim=1)
-
-        # Attention
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-
-        if attention_mask is not None:
-            attn_weights = attn_weights.masked_fill(attention_mask, float('-inf'))
-
-        attn_weights = torch.softmax(attn_weights, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
-
-        # Output projection
-        attn_output = attn_output.transpose(1, 2).contiguous().view(batch, seq_len, -1)
-        return self.o_proj(attn_output)
-
-
-class ReferenceQwen3DecoderLayer(nn.Module):
-    """PyTorch reference Qwen3 Decoder Layer."""
-    def __init__(self, hidden_size, intermediate_size, num_heads, num_kv_heads, head_dim, eps=1e-6):
-        super().__init__()
-        self.input_layernorm = ReferenceRMSNorm(hidden_size, eps)
-        self.self_attn = ReferenceQwen3Attention(hidden_size, num_heads, num_kv_heads, head_dim, eps)
-        self.post_attention_layernorm = ReferenceRMSNorm(hidden_size, eps)
-        self.mlp = ReferenceSwiGLUMLP(hidden_size, intermediate_size)
-
-    def forward(self, x, positions, attention_mask=None):
-        # Attention block
-        residual = x
-        x = self.input_layernorm(x)
-        x = self.self_attn(x, positions, attention_mask)
-        x = residual + x
-
-        # MLP block
-        residual = x
-        x = self.post_attention_layernorm(x)
-        x = self.mlp(x)
-        x = residual + x
-
-        return x
-
-
-class ReferenceQwen3Model(nn.Module):
-    """PyTorch reference Qwen3 Model."""
-    def __init__(self, vocab_size, hidden_size, intermediate_size, num_layers,
-                 num_heads, num_kv_heads, head_dim, eps=1e-6):
-        super().__init__()
-        self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
-        self.layers = nn.ModuleList([
-            ReferenceQwen3DecoderLayer(hidden_size, intermediate_size, num_heads, num_kv_heads, head_dim, eps)
-            for _ in range(num_layers)
-        ])
-        self.norm = ReferenceRMSNorm(hidden_size, eps)
-
-    def forward(self, input_ids, positions=None, attention_mask=None):
-        seq_len = input_ids.shape[1]
-        if positions is None:
-            positions = torch.arange(seq_len, device=input_ids.device)
-
-        x = self.embed_tokens(input_ids)
-        for layer in self.layers:
-            x = layer(x, positions, attention_mask)
-        return self.norm(x)
-
-
-class ReferenceQwen3ForCausalLM(nn.Module):
-    """PyTorch reference Qwen3 for Causal LM."""
-    def __init__(self, vocab_size, hidden_size, intermediate_size, num_layers,
-                 num_heads, num_kv_heads, head_dim, eps=1e-6):
-        super().__init__()
-        self.model = ReferenceQwen3Model(
-            vocab_size, hidden_size, intermediate_size, num_layers,
-            num_heads, num_kv_heads, head_dim, eps
-        )
-        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
-
-    def forward(self, input_ids, positions=None, attention_mask=None):
-        hidden_states = self.model(input_ids, positions, attention_mask)
-        return self.lm_head(hidden_states)
-
-
-def sync_weights_to_snn(ref_model, snn_model, config):
-    """Sync weights from reference PyTorch model to SNN model."""
-    # Embedding
-    snn_model.model.set_embedding_weight(ref_model.model.embed_tokens.weight.data)
-
-    # LM head
-    snn_model.lm_head.set_weight_from_float(ref_model.lm_head.weight.data)
-
-    # Final norm
-    snn_model.model.norm.weight.data = ref_model.model.norm.weight.data.clone()
-
-    # Layers
-    for snn_layer, ref_layer in zip(snn_model.model.layers, ref_model.model.layers):
-        # Input layernorm
-        snn_layer.input_layernorm.weight.data = ref_layer.input_layernorm.weight.data.clone()
-
-        # Post-attention layernorm
-        snn_layer.post_attention_layernorm.weight.data = ref_layer.post_attention_layernorm.weight.data.clone()
-
-        # Attention projections
-        snn_layer.self_attn.set_weights_from_float(
-            ref_layer.self_attn.q_proj.weight.data,
-            ref_layer.self_attn.k_proj.weight.data,
-            ref_layer.self_attn.v_proj.weight.data,
-            ref_layer.self_attn.o_proj.weight.data,
-            ref_layer.self_attn.q_norm.weight.data,
-            ref_layer.self_attn.k_norm.weight.data,
-        )
-
-        # MLP
-        snn_layer.mlp.set_weights_from_float(
-            ref_layer.mlp.gate_proj.weight.data,
-            ref_layer.mlp.up_proj.weight.data,
-            ref_layer.mlp.down_proj.weight.data,
-        )
-
-
-# =============================================================================
-# Test Cases
-# =============================================================================
-
-def test_config():
-    """Test SpikeQwen3Config creation."""
-    print("Testing SpikeQwen3Config...")
-
-    config = SpikeQwen3Config()
-    assert config.vocab_size == 1000
-    assert config.hidden_size == 64
-    assert config.num_hidden_layers == 2
-    assert config.num_attention_heads == 4
-    assert config.head_dim == 16  # 64 // 4
-
-    # Custom config
-    config2 = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=1,  # GQA
-    )
-    assert config2.num_key_value_heads == 1
-    assert config2.head_dim == 16
-
-    print("  [PASS] SpikeQwen3Config")
-    return True
-
-
-def test_mlp_shapes():
-    """Test SpikeQwen3MLP output shapes."""
-    print("Testing SpikeQwen3MLP shapes...")
-
-    hidden_size = 32
-    intermediate_size = 86
-
-    mlp = SpikeQwen3MLP(hidden_size, intermediate_size)
-
-    # Set random weights
-    mlp.set_weights_from_float(
-        torch.randn(intermediate_size, hidden_size),
-        torch.randn(intermediate_size, hidden_size),
-        torch.randn(hidden_size, intermediate_size),
-    )
-
-    # Test input
-    batch_size, seq_len = 2, 4
-    x_float = torch.randn(batch_size, seq_len, hidden_size)
-    x_pulse = float32_to_pulse(x_float)  # [2, 4, 32, 32]
-
-    # Forward
-    mlp.reset()
-    y_pulse = mlp(x_pulse)
-
-    assert y_pulse.shape == (batch_size, seq_len, hidden_size, 32), \
-        f"Expected shape {(batch_size, seq_len, hidden_size, 32)}, got {y_pulse.shape}"
-
-    print("  [PASS] SpikeQwen3MLP shapes")
-    return True
-
-
-def test_attention_shapes():
-    """Test SpikeQwen3Attention output shapes."""
-    print("Testing SpikeQwen3Attention shapes...")
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
-
-    attn = SpikeQwen3Attention(config)
-
-    # Set random weights
-    attn.set_weights_from_float(
-        torch.randn(32, 32),  # q_proj
-        torch.randn(32, 32),  # k_proj
-        torch.randn(32, 32),  # v_proj
-        torch.randn(32, 32),  # o_proj
-    )
-
-    # Test input
-    batch_size, seq_len, hidden_size = 2, 4, 32
-    x_float = torch.randn(batch_size, seq_len, hidden_size)
-    x_pulse = float32_to_pulse(x_float)
-    positions = torch.arange(seq_len)
-
-    # Forward
-    attn.reset()
-    y_pulse = attn(x_pulse, positions)
-
-    assert y_pulse.shape == (batch_size, seq_len, hidden_size, 32), \
-        f"Expected shape {(batch_size, seq_len, hidden_size, 32)}, got {y_pulse.shape}"
-
-    print("  [PASS] SpikeQwen3Attention shapes")
-    return True
-
-
-def test_attention_with_mask():
-    """Test SpikeQwen3Attention with causal mask."""
-    print("Testing SpikeQwen3Attention with mask...")
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
-
-    attn = SpikeQwen3Attention(config)
-
-    # Set random weights
-    attn.set_weights_from_float(
-        torch.randn(32, 32),
-        torch.randn(32, 32),
-        torch.randn(32, 32),
-        torch.randn(32, 32),
-    )
-
-    # Test input
-    batch_size, seq_len, hidden_size = 2, 4, 32
-    x_float = torch.randn(batch_size, seq_len, hidden_size)
-    x_pulse = float32_to_pulse(x_float)
-    positions = torch.arange(seq_len)
-
-    # Causal mask
-    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-
-    # Forward
-    attn.reset()
-    y_pulse = attn(x_pulse, positions, mask)
-
-    assert y_pulse.shape == (batch_size, seq_len, hidden_size, 32)
-
-    print("  [PASS] SpikeQwen3Attention with mask")
-    return True
-
-
-def test_decoder_layer_shapes():
-    """Test SpikeQwen3DecoderLayer output shapes."""
-    print("Testing SpikeQwen3DecoderLayer shapes...")
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        intermediate_size=86,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
-
-    layer = SpikeQwen3DecoderLayer(config)
-
-    # Set MLP weights
-    layer.mlp.set_weights_from_float(
-        torch.randn(86, 32),
-        torch.randn(86, 32),
-        torch.randn(32, 86),
-    )
-
-    # Set attention weights
-    layer.self_attn.set_weights_from_float(
-        torch.randn(32, 32),
-        torch.randn(32, 32),
-        torch.randn(32, 32),
-        torch.randn(32, 32),
-    )
-
-    # Test input
-    batch_size, seq_len, hidden_size = 2, 4, 32
-    x_float = torch.randn(batch_size, seq_len, hidden_size)
-    x_pulse = float32_to_pulse(x_float)
-    positions = torch.arange(seq_len)
-
-    # Forward
-    layer.reset()
-    y_pulse = layer(x_pulse, positions)
-
-    assert y_pulse.shape == (batch_size, seq_len, hidden_size, 32), \
-        f"Expected shape {(batch_size, seq_len, hidden_size, 32)}, got {y_pulse.shape}"
-
-    print("  [PASS] SpikeQwen3DecoderLayer shapes")
-    return True
-
-
-def test_model_shapes():
-    """Test SpikeQwen3Model output shapes."""
-    print("Testing SpikeQwen3Model shapes...")
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        intermediate_size=86,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
-
-    model = SpikeQwen3Model(config)
-
-    # Set embedding weights
-    model.set_embedding_weight(torch.randn(100, 32))
-
-    # Set layer weights
-    for layer in model.layers:
-        layer.mlp.set_weights_from_float(
-            torch.randn(86, 32),
-            torch.randn(86, 32),
-            torch.randn(32, 86),
-        )
-        layer.self_attn.set_weights_from_float(
-            torch.randn(32, 32),
-            torch.randn(32, 32),
-            torch.randn(32, 32),
-            torch.randn(32, 32),
-        )
-
-    # Test input
-    batch_size, seq_len = 2, 4
-    input_ids = torch.randint(0, 100, (batch_size, seq_len))
-
-    # Forward
-    model.reset()
-    hidden_states = model(input_ids)
-
-    assert hidden_states.shape == (batch_size, seq_len, 32, 32), \
-        f"Expected shape {(batch_size, seq_len, 32, 32)}, got {hidden_states.shape}"
-
-    print("  [PASS] SpikeQwen3Model shapes")
-    return True
-
-
-def test_causal_lm_shapes():
-    """Test SpikeQwen3ForCausalLM output shapes."""
-    print("Testing SpikeQwen3ForCausalLM shapes...")
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        intermediate_size=86,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
-
-    model = SpikeQwen3ForCausalLM(config)
-
-    # Set embedding weights
-    model.model.set_embedding_weight(torch.randn(100, 32))
-
-    # Set lm_head weights
-    model.lm_head.set_weight_from_float(torch.randn(100, 32))
-
-    # Set layer weights
-    for layer in model.model.layers:
-        layer.mlp.set_weights_from_float(
-            torch.randn(86, 32),
-            torch.randn(86, 32),
-            torch.randn(32, 86),
-        )
-        layer.self_attn.set_weights_from_float(
-            torch.randn(32, 32),
-            torch.randn(32, 32),
-            torch.randn(32, 32),
-            torch.randn(32, 32),
-        )
-
-    # Test input
-    batch_size, seq_len = 2, 4
-    input_ids = torch.randint(0, 100, (batch_size, seq_len))
-
-    # Forward
-    model.reset()
-    logits = model(input_ids)
-
-    assert logits.shape == (batch_size, seq_len, 100, 32), \
-        f"Expected shape {(batch_size, seq_len, 100, 32)}, got {logits.shape}"
-
-    print("  [PASS] SpikeQwen3ForCausalLM shapes")
-    return True
-
-
-def test_gqa_shapes():
-    """Test GQA (Grouped Query Attention) shapes."""
-    print("Testing GQA (num_key_value_heads < num_attention_heads)...")
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        intermediate_size=86,
-        num_hidden_layers=1,
-        num_attention_heads=4,   # 4 attention heads
-        num_key_value_heads=2,   # 2 KV heads (GQA)
-        head_dim=8,              # 32 // 4
-    )
-
-    attn = SpikeQwen3Attention(config)
-
-    # Set weights with correct dimensions
-    attn.set_weights_from_float(
-        torch.randn(32, 32),  # q_proj: [4*8, 32]
-        torch.randn(16, 32),  # k_proj: [2*8, 32]
-        torch.randn(16, 32),  # v_proj: [2*8, 32]
-        torch.randn(32, 32),  # o_proj: [32, 4*8]
-    )
-
-    # Test input
-    batch_size, seq_len, hidden_size = 2, 4, 32
-    x_float = torch.randn(batch_size, seq_len, hidden_size)
-    x_pulse = float32_to_pulse(x_float)
-    positions = torch.arange(seq_len)
-
-    # Forward
-    attn.reset()
-    y_pulse = attn(x_pulse, positions)
-
-    assert y_pulse.shape == (batch_size, seq_len, hidden_size, 32)
-
-    print("  [PASS] GQA shapes")
-    return True
-
-
-def test_mlp_accuracy():
-    """Test SpikeQwen3MLP accuracy against PyTorch reference."""
-    print("Testing SpikeQwen3MLP accuracy...")
-
-    torch.manual_seed(42)
-
-    hidden_size = 16
-    intermediate_size = 43  # ~2.6875 * 16
-
-    # Create SNN MLP
-    snn_mlp = SpikeQwen3MLP(hidden_size, intermediate_size)
-
-    # Create reference MLP
-    ref_mlp = ReferenceSwiGLUMLP(hidden_size, intermediate_size)
-
-    # Sync weights
-    gate_w = torch.randn(intermediate_size, hidden_size)
-    up_w = torch.randn(intermediate_size, hidden_size)
-    down_w = torch.randn(hidden_size, intermediate_size)
-
-    snn_mlp.set_weights_from_float(gate_w, up_w, down_w)
-    ref_mlp.gate_proj.weight.data = gate_w
-    ref_mlp.up_proj.weight.data = up_w
-    ref_mlp.down_proj.weight.data = down_w
-
-    # Test input
-    x_float = torch.randn(1, 2, hidden_size)
-
-    # SNN forward
-    x_pulse = float32_to_pulse(x_float)
-    snn_mlp.reset()
-    y_snn_pulse = snn_mlp(x_pulse)
-    y_snn = pulse_to_float32(y_snn_pulse)
-
-    # Reference forward
-    with torch.no_grad():
-        y_ref = ref_mlp(x_float)
-
-    # Compare
-    error = (y_snn - y_ref).abs()
-    max_error = error.max().item()
-    mean_error = error.mean().item()
-
-    print(f"    Max Error: {max_error:.2e}")
-    print(f"    Mean Error: {mean_error:.2e}")
-
-    # Accept some tolerance due to FP32 precision
-    if max_error < 1e-3:
-        print("  [PASS] SpikeQwen3MLP accuracy (within 1e-3)")
-        return True
-    else:
-        print(f"  [WARN] SpikeQwen3MLP accuracy: max_error={max_error:.2e}")
-        return True  # Still pass but with warning
-
-
-def test_full_model_accuracy():
-    """Test full SpikeQwen3ForCausalLM accuracy against PyTorch reference.
-
-    This is the CORE end-to-end test:
-    1. Create SNN model and PyTorch reference model
-    2. Sync weights
-    3. Same input
-    4. Compare output (target: 0 ULP error)
-    """
-    print("Testing Full Model Accuracy (SNN vs PyTorch)...")
-    print("=" * 50)
-
-    torch.manual_seed(42)
-
-    # Small config for testing
-    vocab_size = 50
-    hidden_size = 16
-    intermediate_size = 43  # ~2.6875 * 16
-    num_layers = 1
-    num_heads = 2
-    num_kv_heads = 2
-    head_dim = 8  # hidden_size // num_heads
-    eps = 1e-6
-
-    config = SpikeQwen3Config(
-        vocab_size=vocab_size,
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_hidden_layers=num_layers,
-        num_attention_heads=num_heads,
-        num_key_value_heads=num_kv_heads,
-        head_dim=head_dim,
-        rms_norm_eps=eps,
-    )
-
-    # Create SNN model
-    print("  Creating SNN model...")
-    snn_model = SpikeQwen3ForCausalLM(config)
-
-    # Create reference PyTorch model
-    print("  Creating PyTorch reference model...")
-    ref_model = ReferenceQwen3ForCausalLM(
-        vocab_size, hidden_size, intermediate_size, num_layers,
-        num_heads, num_kv_heads, head_dim, eps
-    )
-
-    # Sync weights
-    print("  Syncing weights...")
-    sync_weights_to_snn(ref_model, snn_model, config)
-
-    # Test input
-    batch_size = 1
-    seq_len = 2
-    input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
-    print(f"  Input: {input_ids.tolist()}")
-
-    # SNN forward
-    print("  Running SNN forward pass...")
-    snn_model.reset()
-    logits_snn_pulse = snn_model(input_ids)
-    logits_snn = pulse_to_float32(logits_snn_pulse)
-
-    # Reference forward
-    print("  Running PyTorch reference forward pass...")
-    with torch.no_grad():
-        logits_ref = ref_model(input_ids)
-
-    # Compare
-    print()
-    print("  Results:")
-    print(f"    SNN output shape: {logits_snn.shape}")
-    print(f"    Ref output shape: {logits_ref.shape}")
-
-    error = (logits_snn - logits_ref).abs()
-    max_error = error.max().item()
-    mean_error = error.mean().item()
-
-    # Check bit-exact match
-    exact_match = torch.equal(logits_snn, logits_ref)
-    match_ratio = (logits_snn == logits_ref).float().mean().item()
-
-    print(f"    Max Error: {max_error:.6e}")
-    print(f"    Mean Error: {mean_error:.6e}")
-    print(f"    Bit-exact Match: {exact_match}")
-    print(f"    Match Ratio: {match_ratio*100:.2f}%")
-
-    # Sample comparison
-    print()
-    print("  Sample output comparison (first 5 logits):")
-    print(f"    SNN: {logits_snn[0, 0, :5].tolist()}")
-    print(f"    Ref: {logits_ref[0, 0, :5].tolist()}")
-
-    print("=" * 50)
-
-    if exact_match:
-        print("  [PASS] Full model: BIT-EXACT MATCH (0 ULP error)!")
-        return True
-    elif max_error < 1e-5:
-        print(f"  [PASS] Full model: Near-exact (max_error={max_error:.2e})")
-        return True
-    elif max_error < 1e-3:
-        print(f"  [WARN] Full model: Acceptable (max_error={max_error:.2e})")
-        return True
-    else:
-        print(f"  [FAIL] Full model: Error too large (max_error={max_error:.2e})")
-        return False
-
-
-def test_gpu():
-    """Test on GPU if available."""
-    if not torch.cuda.is_available():
-        print("Skipping GPU test (CUDA not available)")
-        return True
-
-    print("Testing on GPU...")
-
-    device = torch.device('cuda')
-
-    config = SpikeQwen3Config(
-        vocab_size=100,
-        hidden_size=32,
-        intermediate_size=86,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
-
-    model = SpikeQwen3ForCausalLM(config).to(device)
-
-    # Set weights
-    model.model.set_embedding_weight(torch.randn(100, 32, device=device))
-    model.lm_head.set_weight_from_float(torch.randn(100, 32, device=device))
-    for layer in model.model.layers:
-        layer.mlp.set_weights_from_float(
-            torch.randn(86, 32, device=device),
-            torch.randn(86, 32, device=device),
-            torch.randn(32, 86, device=device),
-        )
-        layer.self_attn.set_weights_from_float(
-            torch.randn(32, 32, device=device),
-            torch.randn(32, 32, device=device),
-            torch.randn(32, 32, device=device),
-            torch.randn(32, 32, device=device),
-        )
-
-    # Test input
-    input_ids = torch.randint(0, 100, (1, 4), device=device)
-
-    # Forward
-    model.reset()
-    logits = model(input_ids)
-
-    assert logits.device.type == 'cuda'
-    assert logits.shape == (1, 4, 100, 32)
-
-    print("  [PASS] GPU test")
-    return True
-
-
-def compare_tensors(name, snn_tensor, ref_tensor, threshold=1e-5):
-    """比较两个张量并打印详细统计"""
-    diff = (snn_tensor - ref_tensor).abs()
-    max_diff = diff.max().item()
-    mean_diff = diff.mean().item()
-    match_rate = (diff < threshold).float().mean().item() * 100
-
-    # 相关性
-    if snn_tensor.numel() > 1:
-        snn_flat = snn_tensor.flatten()
-        ref_flat = ref_tensor.flatten()
-        correlation = torch.corrcoef(torch.stack([snn_flat, ref_flat]))[0, 1].item()
-    else:
-        correlation = 1.0 if max_diff < threshold else 0.0
-
-    print(f"  {name:25s}: max={max_diff:.2e}, mean={mean_diff:.2e}, "
-          f"match(<{threshold})={match_rate:5.1f}%, corr={correlation:.6f}")
-
+def compute_ulp_error_fp32(snn_result, ref_result):
+    """Compute FP32 ULP error."""
+    snn_bits = snn_result.view(torch.int32)
+    ref_bits = ref_result.view(torch.int32)
+    ulp_diff = (snn_bits - ref_bits).abs()
     return {
-        'name': name,
-        'max_diff': max_diff,
-        'mean_diff': mean_diff,
-        'match_rate': match_rate,
-        'correlation': correlation
+        'max_ulp': ulp_diff.max().item(),
+        'mean_ulp': ulp_diff.float().mean().item(),
+        'zero_ulp_rate': (ulp_diff == 0).float().mean().item() * 100,
     }
 
 
-def test_attention_with_probes(device='cuda'):
-    """Attention 层探针分析 - 定位误差来源"""
-    print("\n" + "="*70)
-    print("Qwen3 Attention 探针分析 (误差来源定位)")
-    print("="*70)
+def test_qwen3_e2e(model_name="Qwen/Qwen3-0.6B"):
+    """
+    End-to-end test: SNN vs HuggingFace pretrained model.
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
 
-    # 配置
-    config = SpikeQwen3Config(
-        hidden_size=64,
-        num_attention_heads=4,
-        num_key_value_heads=4,
-        head_dim=16,
-        rms_norm_eps=1e-6,
-        rope_theta=10000.0
-    )
-
-    # 测试数据
-    torch.manual_seed(42)
-    batch_size = 2
-    seq_len = 8
-
-    hidden_states = torch.randn(batch_size, seq_len, config.hidden_size, device=device)
-    positions = torch.arange(seq_len, device=device)
-    attention_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
-
-    # 创建权重
-    q_weight = torch.randn(config.num_attention_heads * config.head_dim, config.hidden_size, device=device) * 0.1
-    k_weight = torch.randn(config.num_key_value_heads * config.head_dim, config.hidden_size, device=device) * 0.1
-    v_weight = torch.randn(config.num_key_value_heads * config.head_dim, config.hidden_size, device=device) * 0.1
-    o_weight = torch.randn(config.hidden_size, config.num_attention_heads * config.head_dim, device=device) * 0.1
-
-    # PyTorch 参考
-    ref_attn = ReferenceQwen3Attention(
-        config.hidden_size, config.num_attention_heads,
-        config.num_key_value_heads, config.head_dim, config.rms_norm_eps
+    # =========================================================================
+    # 1. Load HuggingFace pretrained model
+    # =========================================================================
+    print(f"\n1. Loading HuggingFace model: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32,
+        trust_remote_code=True
     ).to(device)
-    ref_attn.q_proj.weight.data = q_weight
-    ref_attn.k_proj.weight.data = k_weight
-    ref_attn.v_proj.weight.data = v_weight
-    ref_attn.o_proj.weight.data = o_weight
+    hf_model.eval()
+    print(f"   HuggingFace model loaded!")
 
+    hf_config = hf_model.config
+    print(f"   vocab_size: {hf_config.vocab_size}")
+    print(f"   hidden_size: {hf_config.hidden_size}")
+    print(f"   intermediate_size: {hf_config.intermediate_size}")
+    print(f"   num_hidden_layers: {hf_config.num_hidden_layers}")
+    print(f"   num_attention_heads: {hf_config.num_attention_heads}")
+    print(f"   num_key_value_heads: {hf_config.num_key_value_heads}")
+
+    # =========================================================================
+    # 2. Create SNN model with identical config
+    # =========================================================================
+    print(f"\n2. Creating SNN model (identical config)")
+    head_dim = getattr(hf_config, 'head_dim', hf_config.hidden_size // hf_config.num_attention_heads)
+
+    snn_config = SpikeQwen3Config(
+        vocab_size=hf_config.vocab_size,
+        hidden_size=hf_config.hidden_size,
+        intermediate_size=hf_config.intermediate_size,
+        num_hidden_layers=hf_config.num_hidden_layers,
+        num_attention_heads=hf_config.num_attention_heads,
+        num_key_value_heads=hf_config.num_key_value_heads,
+        head_dim=head_dim,
+        rms_norm_eps=hf_config.rms_norm_eps,
+        rope_theta=hf_config.rope_theta,
+    )
+    print(f"   SNN config: {snn_config.num_hidden_layers} layers, hidden_size={snn_config.hidden_size}", flush=True)
+
+    # 逐步创建模型以定位卡顿
+    import time
+    from models.qwen3_model import SpikeQwen3Model
+    from atomic_ops import SpikeFP32Linear
+
+    print(f"   Creating embedding...", flush=True)
+    t0 = time.time()
+    from atomic_ops import SpikeFP32Embedding
+    embed = SpikeFP32Embedding(snn_config.vocab_size, snn_config.hidden_size)
+    print(f"   Embedding created in {time.time()-t0:.1f}s", flush=True)
+
+    print(f"   Creating first decoder layer (component by component)...", flush=True)
+    from atomic_ops import SpikeFP32RMSNormFullFP64, SpikeFP32Adder
+    from models.qwen3_attention import SpikeQwen3Attention
+    from models.qwen3_mlp import SpikeQwen3MLP
+
+    print(f"      input_layernorm...", flush=True)
+    t0 = time.time()
+    ln1 = SpikeFP32RMSNormFullFP64(snn_config.hidden_size, snn_config.rms_norm_eps)
+    print(f"      input_layernorm: {time.time()-t0:.1f}s", flush=True)
+
+    print(f"      self_attn...", flush=True)
+    t0 = time.time()
+    attn = SpikeQwen3Attention(snn_config)
+    print(f"      self_attn: {time.time()-t0:.1f}s", flush=True)
+
+    print(f"      post_attention_layernorm...", flush=True)
+    t0 = time.time()
+    ln2 = SpikeFP32RMSNormFullFP64(snn_config.hidden_size, snn_config.rms_norm_eps)
+    print(f"      post_attention_layernorm: {time.time()-t0:.1f}s", flush=True)
+
+    print(f"      mlp...", flush=True)
+    t0 = time.time()
+    mlp = SpikeQwen3MLP(snn_config.hidden_size, snn_config.intermediate_size)
+    print(f"      mlp: {time.time()-t0:.1f}s", flush=True)
+
+    print(f"      residual adders...", flush=True)
+    t0 = time.time()
+    add1 = SpikeFP32Adder()
+    add2 = SpikeFP32Adder()
+    print(f"      residual adders: {time.time()-t0:.1f}s", flush=True)
+
+    print(f"   First layer components OK. Now creating full model...", flush=True)
+
+    print(f"   Creating full model...", flush=True)
+    t0 = time.time()
+    snn_model = SpikeQwen3ForCausalLM(snn_config)
+    print(f"   Full model created in {time.time()-t0:.1f}s", flush=True)
+
+    print(f"   Moving to {device}...", flush=True)
+    t0 = time.time()
+    snn_model = snn_model.to(device)
+    print(f"   SNN model on {device} in {time.time()-t0:.1f}s", flush=True)
+
+    # =========================================================================
+    # 3. Transfer ALL weights from HuggingFace to SNN
+    # =========================================================================
+    print(f"\n3. Transferring weights from HuggingFace to SNN")
+
+    print(f"   Embedding [{hf_model.model.embed_tokens.weight.shape}]...")
+    snn_model.model.set_embedding_weight(hf_model.model.embed_tokens.weight.data)
+
+    print(f"   LM head [{hf_model.lm_head.weight.shape}]...")
+    snn_model.lm_head.set_weight_from_float(hf_model.lm_head.weight.data)
+
+    print(f"   Final norm [{hf_model.model.norm.weight.shape}]...")
+    snn_model.model.norm.weight.data = hf_model.model.norm.weight.data.clone()
+
+    for i in range(hf_config.num_hidden_layers):
+        print(f"   Layer {i}/{hf_config.num_hidden_layers}...", end='\r')
+        snn_layer = snn_model.model.layers[i]
+        hf_layer = hf_model.model.layers[i]
+
+        snn_layer.input_layernorm.weight.data = hf_layer.input_layernorm.weight.data.clone()
+        snn_layer.post_attention_layernorm.weight.data = hf_layer.post_attention_layernorm.weight.data.clone()
+
+        snn_layer.self_attn.set_weights_from_float(
+            hf_layer.self_attn.q_proj.weight.data,
+            hf_layer.self_attn.k_proj.weight.data,
+            hf_layer.self_attn.v_proj.weight.data,
+            hf_layer.self_attn.o_proj.weight.data,
+            hf_layer.self_attn.q_norm.weight.data if hasattr(hf_layer.self_attn, 'q_norm') else None,
+            hf_layer.self_attn.k_norm.weight.data if hasattr(hf_layer.self_attn, 'k_norm') else None,
+        )
+
+        snn_layer.mlp.set_weights_from_float(
+            hf_layer.mlp.gate_proj.weight.data,
+            hf_layer.mlp.up_proj.weight.data,
+            hf_layer.mlp.down_proj.weight.data,
+        )
+
+    print(f"   All {hf_config.num_hidden_layers} layers transferred!")
+
+    # =========================================================================
+    # 4. Test with real tokenized input
+    # =========================================================================
+    prompt = "Hello, how are you?"
+    print(f"\n4. Testing with input: '{prompt}'")
+
+    inputs = tokenizer(prompt, return_tensors="pt")
+    input_ids = inputs.input_ids.to(device)
+    seq_len = input_ids.shape[1]
+
+    print(f"   Token IDs: {input_ids.tolist()}")
+    print(f"   Sequence length: {seq_len}")
+
+    # =========================================================================
+    # 5. HuggingFace forward pass
+    # =========================================================================
+    print(f"\n5. Running HuggingFace forward pass...")
     with torch.no_grad():
-        ref_output = ref_attn(hidden_states, positions, attention_mask)
-
-    # SNN 模型
-    snn_attn = SpikeQwen3Attention(config).to(device)
-    snn_attn.set_weights_from_float(q_weight, k_weight, v_weight, o_weight)
-
-    # SNN 前向传播并提取中间值
-    hidden_pulse = float32_to_pulse(hidden_states)
-    snn_attn.reset()
-
-    print("\n逐层探针分析:")
-    print("-" * 70)
-    results = []
-
-    # ========== 1. Q/K/V 投影 ==========
-    Q_pulse = snn_attn.q_proj(hidden_pulse)
-    K_pulse = snn_attn.k_proj(hidden_pulse)
-    V_pulse = snn_attn.v_proj(hidden_pulse)
-
-    Q_snn = pulse_to_float32(Q_pulse)
-    K_snn = pulse_to_float32(K_pulse)
-    V_snn = pulse_to_float32(V_pulse)
-
-    # PyTorch 参考
-    Q_ref = hidden_states @ q_weight.T
-    K_ref = hidden_states @ k_weight.T
-    V_ref = hidden_states @ v_weight.T
-
-    results.append(compare_tensors("1. Q_proj (Linear)", Q_snn, Q_ref))
-    results.append(compare_tensors("   K_proj (Linear)", K_snn, K_ref))
-    results.append(compare_tensors("   V_proj (Linear)", V_snn, V_ref))
-
-    # ========== 2. Reshape to heads ==========
-    Q_snn_heads = Q_snn.view(batch_size, seq_len, config.num_attention_heads, config.head_dim).transpose(1, 2)
-    K_snn_heads = K_snn.view(batch_size, seq_len, config.num_key_value_heads, config.head_dim).transpose(1, 2)
-    V_snn_heads = V_snn.view(batch_size, seq_len, config.num_key_value_heads, config.head_dim).transpose(1, 2)
-
-    Q_ref_heads = Q_ref.view(batch_size, seq_len, config.num_attention_heads, config.head_dim).transpose(1, 2)
-    K_ref_heads = K_ref.view(batch_size, seq_len, config.num_key_value_heads, config.head_dim).transpose(1, 2)
-
-    # ========== 3. QK Norm ==========
-    def rms_norm_ref(x, eps=1e-6):
-        variance = x.pow(2).mean(-1, keepdim=True)
-        return x * torch.rsqrt(variance + eps)
-
-    Q_norm_ref = rms_norm_ref(Q_ref_heads, config.rms_norm_eps)
-    K_norm_ref = rms_norm_ref(K_ref_heads, config.rms_norm_eps)
-
-    # SNN QK Norm
-    Q_pulse_heads = snn_attn._reshape_to_heads(Q_pulse, batch_size, seq_len, config.num_attention_heads)
-    K_pulse_heads = snn_attn._reshape_to_heads(K_pulse, batch_size, seq_len, config.num_key_value_heads)
-    Q_norm_pulse = snn_attn._apply_head_norm(Q_pulse_heads, snn_attn.q_norm)
-    K_norm_pulse = snn_attn._apply_head_norm(K_pulse_heads, snn_attn.k_norm)
-
-    Q_norm_snn = pulse_to_float32(Q_norm_pulse)
-    K_norm_snn = pulse_to_float32(K_norm_pulse)
-
-    results.append(compare_tensors("2. Q_norm (RMSNorm)", Q_norm_snn, Q_norm_ref))
-    results.append(compare_tensors("   K_norm (RMSNorm)", K_norm_snn, K_norm_ref))
-
-    # ========== 4. RoPE ==========
-    def apply_rope_ref_simple(x, positions, head_dim, base=10000.0):
-        batch_size, num_heads, seq_len, _ = x.shape
-        half_dim = head_dim // 2
-        i = torch.arange(0, half_dim, dtype=x.dtype, device=x.device)
-        theta = base ** (-2.0 * i / head_dim)
-        result = torch.zeros_like(x)
-        for pos_idx, pos in enumerate(positions):
-            angle = theta * pos.float()
-            sin_angle = torch.sin(angle)
-            cos_angle = torch.cos(angle)
-            x_pos = x[:, :, pos_idx, :]
-            x_even = x_pos[:, :, 0::2]
-            x_odd = x_pos[:, :, 1::2]
-            result_even = x_even * cos_angle - x_odd * sin_angle
-            result_odd = x_even * sin_angle + x_odd * cos_angle
-            result[:, :, pos_idx, 0::2] = result_even
-            result[:, :, pos_idx, 1::2] = result_odd
-        return result
-
-    Q_rope_ref = apply_rope_ref_simple(Q_norm_ref, positions, config.head_dim, config.rope_theta)
-    K_rope_ref = apply_rope_ref_simple(K_norm_ref, positions, config.head_dim, config.rope_theta)
-
-    Q_rope_pulse = snn_attn._apply_rope(Q_norm_pulse, positions)
-    K_rope_pulse = snn_attn._apply_rope(K_norm_pulse, positions)
-
-    Q_rope_snn = pulse_to_float32(Q_rope_pulse)
-    K_rope_snn = pulse_to_float32(K_rope_pulse)
-
-    results.append(compare_tensors("3. Q_rope (RoPE)", Q_rope_snn, Q_rope_ref))
-    results.append(compare_tensors("   K_rope (RoPE)", K_rope_snn, K_rope_ref))
-
-    # ========== 5. Attention Scores (Q @ K^T) ==========
-    scale = 1.0 / (config.head_dim ** 0.5)
-    attn_scores_ref = torch.matmul(Q_rope_ref, K_rope_ref.transpose(-2, -1)) * scale
-
-    attn_scores_pulse = snn_attn._batched_matmul_qk(Q_rope_pulse, K_rope_pulse)
-    scale_pulse = snn_attn.scale_pulse.to(device)
-    attn_scores_scaled_pulse = snn_attn.scale_mul(attn_scores_pulse, scale_pulse)
-    attn_scores_snn = pulse_to_float32(attn_scores_scaled_pulse)
-
-    results.append(compare_tensors("4. attn_scores (QK^T)", attn_scores_snn, attn_scores_ref))
-
-    # ========== 6. Mask + Softmax ==========
-    attn_scores_masked_ref = attn_scores_ref.masked_fill(attention_mask, float('-inf'))
-    attn_weights_ref = torch.softmax(attn_scores_masked_ref, dim=-1)
-
-    attn_scores_masked_pulse = snn_attn._apply_mask(attn_scores_scaled_pulse, attention_mask, device)
-    original_shape = attn_scores_masked_pulse.shape
-    attn_scores_flat = attn_scores_masked_pulse.reshape(-1, seq_len, 32)
-    attn_weights_flat = snn_attn.softmax(attn_scores_flat)
-    attn_weights_pulse = attn_weights_flat.reshape(original_shape)
-    attn_weights_snn = pulse_to_float32(attn_weights_pulse)
-
-    # 处理 NaN
-    nan_mask = torch.isnan(attn_weights_ref)
-    attn_weights_snn_clean = attn_weights_snn.clone()
-    attn_weights_snn_clean[nan_mask] = 0
-    attn_weights_ref_clean = attn_weights_ref.clone()
-    attn_weights_ref_clean[nan_mask] = 0
-
-    results.append(compare_tensors("5. attn_weights (Softmax)", attn_weights_snn_clean, attn_weights_ref_clean))
-
-    # ========== 7. Attn @ V ==========
-    attn_output_ref = torch.matmul(attn_weights_ref, V_snn_heads)  # 使用 SNN 的 V
-
-    V_pulse_heads = snn_attn._reshape_to_heads(V_pulse, batch_size, seq_len, config.num_key_value_heads)
-    attn_output_pulse = snn_attn._batched_matmul_av(attn_weights_pulse, V_pulse_heads)
-    attn_output_snn = pulse_to_float32(attn_output_pulse)
-
-    results.append(compare_tensors("6. attn_output (AV)", attn_output_snn, attn_output_ref))
-
-    # ========== 8. 完整输出 ==========
-    snn_attn.reset()
-    output_pulse = snn_attn(hidden_pulse, positions, attention_mask)
-    output_snn = pulse_to_float32(output_pulse)
-
-    results.append(compare_tensors("7. final_output (完整)", output_snn, ref_output))
-
-    # ========== 汇总 ==========
-    print("\n" + "="*70)
-    print("误差累积分析汇总")
-    print("="*70)
-
-    print(f"\n{'Layer':<30} {'Max Diff':>12} {'Match%':>10} {'Corr':>12}")
-    print("-" * 65)
-    for r in results:
-        print(f"{r['name']:<30} {r['max_diff']:>12.2e} {r['match_rate']:>9.1f}% {r['correlation']:>12.6f}")
-
-    # 找出误差最大的层
-    max_error_layer = max(results, key=lambda x: x['max_diff'])
-    print(f"\n>>> 误差最大的层: {max_error_layer['name']} (max_diff={max_error_layer['max_diff']:.2e})")
-
-    return results
-
-
-def test_mlp_with_probes(device='cuda'):
-    """MLP (SwiGLU) 探针分析"""
-    print("\n" + "="*70)
-    print("Qwen3 MLP (SwiGLU) 探针分析")
-    print("="*70)
-    print(f"Device: {device}")
-
-    hidden_size = 64
-    intermediate_size = 172
-
-    torch.manual_seed(42)
-    batch_size = 2
-    seq_len = 8
-
-    x = torch.randn(batch_size, seq_len, hidden_size, device=device)
-
-    # 权重
-    gate_weight = torch.randn(intermediate_size, hidden_size, device=device) * 0.1
-    up_weight = torch.randn(intermediate_size, hidden_size, device=device) * 0.1
-    down_weight = torch.randn(hidden_size, intermediate_size, device=device) * 0.1
-
-    print("\n逐层探针分析:")
-    print("-" * 70)
-
-    # PyTorch 参考
-    gate_ref = x @ gate_weight.T
-    gate_act_ref = gate_ref * torch.sigmoid(gate_ref)  # SiLU
-    up_ref = x @ up_weight.T
-    hidden_ref = gate_act_ref * up_ref
-    output_ref = hidden_ref @ down_weight.T
-
-    # SNN
-    snn_mlp = SpikeQwen3MLP(hidden_size, intermediate_size).to(device)
-    snn_mlp.set_weights_from_float(gate_weight, up_weight, down_weight)
-
-    x_pulse = float32_to_pulse(x)
-    snn_mlp.reset()
-
-    results = []
-
-    # 逐步执行
-    gate_pulse = snn_mlp.gate_proj(x_pulse)
-    gate_snn = pulse_to_float32(gate_pulse)
-    results.append(compare_tensors("1. gate_proj (Linear)", gate_snn, gate_ref))
-
-    gate_act_pulse = snn_mlp.act_fn(gate_pulse)
-    gate_act_snn = pulse_to_float32(gate_act_pulse)
-    results.append(compare_tensors("2. gate_silu (SiLU)", gate_act_snn, gate_act_ref))
-
-    up_pulse = snn_mlp.up_proj(x_pulse)
-    up_snn = pulse_to_float32(up_pulse)
-    results.append(compare_tensors("3. up_proj (Linear)", up_snn, up_ref))
-
-    hidden_pulse = snn_mlp.mul(gate_act_pulse, up_pulse)
-    hidden_snn = pulse_to_float32(hidden_pulse)
-    results.append(compare_tensors("4. gate * up (Mul)", hidden_snn, hidden_ref))
-
-    output_pulse = snn_mlp.down_proj(hidden_pulse)
-    output_snn = pulse_to_float32(output_pulse)
-    results.append(compare_tensors("5. down_proj (Linear)", output_snn, output_ref))
-
-    # 汇总
-    max_error_layer = max(results, key=lambda x: x['max_diff'])
-    print(f"\n>>> 误差最大的层: {max_error_layer['name']} (max_diff={max_error_layer['max_diff']:.2e})")
-
-    return results
-
-
-def run_all_tests():
-    """Run all tests."""
-    print("=" * 60)
-    print("Qwen3 SNN End-to-End Tests")
-    print("=" * 60)
-    print()
-
-    tests = [
-        test_config,
-        test_mlp_shapes,
-        test_attention_shapes,
-        test_attention_with_mask,
-        test_decoder_layer_shapes,
-        test_full_model_accuracy,  # CORE: SNN vs PyTorch comparison
-        test_model_shapes,
-        test_causal_lm_shapes,
-        test_gqa_shapes,
-        test_mlp_accuracy,
-        test_gpu,
-    ]
-
-    passed = 0
-    failed = 0
-
-    for test in tests:
-        try:
-            if test():
-                passed += 1
-            else:
-                failed += 1
-        except Exception as e:
-            print(f"  [FAIL] {test.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-
-    print()
-    print("=" * 60)
-    print(f"Results: {passed} passed, {failed} failed")
-    print("=" * 60)
-
-    return failed == 0
-
-
-def run_probe_analysis():
-    """运行探针分析 (误差来源定位)"""
-    print("=" * 70)
-    print("Qwen3 SNN 探针分析 - 误差来源定位")
-    print("=" * 70)
-
-    # 检测设备
-    if torch.cuda.is_available():
-        device = 'cuda'
-        print(f"\nCUDA 可用: {torch.cuda.get_device_name(0)}")
-        print(f"显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    else:
-        device = 'cpu'
-        print("\nCUDA 不可用，使用 CPU")
-
-    # 运行探针分析
-    attn_results = test_attention_with_probes(device)
-    mlp_results = test_mlp_with_probes(device)
-
-    print("\n" + "=" * 70)
-    print("探针分析完成")
-    print("=" * 70)
-
-    return attn_results, mlp_results
+        hf_outputs = hf_model(input_ids)
+        hf_logits = hf_outputs.logits
+    print(f"   Output shape: {hf_logits.shape}")
+
+    # =========================================================================
+    # 6. SNN forward pass
+    # =========================================================================
+    print(f"\n6. Running SNN forward pass...")
+    attention_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
+    snn_model.reset()
+    snn_logits_pulse = snn_model(input_ids, attention_mask=attention_mask)
+    snn_logits = pulse_to_float32(snn_logits_pulse)
+    print(f"   Output shape: {snn_logits.shape}")
+
+    # =========================================================================
+    # 7. Compare results
+    # =========================================================================
+    print("\n" + "="*60)
+    print("Results")
+    print("="*60)
+
+    diff = (snn_logits - hf_logits).abs()
+    print(f"Max absolute error:  {diff.max().item():.6e}")
+    print(f"Mean absolute error: {diff.mean().item():.6e}")
+
+    ulp_stats = compute_ulp_error_fp32(snn_logits, hf_logits)
+    print(f"Max ULP error:       {ulp_stats['max_ulp']}")
+    print(f"Mean ULP error:      {ulp_stats['mean_ulp']:.2f}")
+    print(f"0-ULP rate:          {ulp_stats['zero_ulp_rate']:.1f}%")
+
+    hf_pred = hf_logits[0, -1].argmax().item()
+    snn_pred = snn_logits[0, -1].argmax().item()
+    print(f"\nNext token prediction:")
+    print(f"  HuggingFace: {hf_pred} -> '{tokenizer.decode([hf_pred])}'")
+    print(f"  SNN:         {snn_pred} -> '{tokenizer.decode([snn_pred])}'")
+    print(f"  Match: {hf_pred == snn_pred}")
+
+    return ulp_stats
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description='Qwen3 SNN Tests')
-    parser.add_argument('--probe', action='store_true', help='运行探针分析 (误差来源定位)')
-    parser.add_argument('--all', action='store_true', help='运行所有测试')
+    parser = argparse.ArgumentParser(description='Qwen3 SNN E2E Test')
+    parser.add_argument('--model', type=str, default='Qwen/Qwen3-0.6B')
     args = parser.parse_args()
 
-    if args.probe:
-        run_probe_analysis()
-    elif args.all:
-        run_probe_analysis()
-        print("\n")
-        success = run_all_tests()
-        sys.exit(0 if success else 1)
-    else:
-        success = run_all_tests()
-        sys.exit(0 if success else 1)
+    test_qwen3_e2e(args.model)

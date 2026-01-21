@@ -3,6 +3,14 @@ Core SNN components - Logic gates, neurons, and spike mode control
 """
 from .spike_mode import SpikeMode
 from .training_mode import TrainingMode
+from .accumulator import (
+    Accumulator,
+    SequentialAccumulator,
+    ParallelAccumulator,
+    PartialProductAccumulator,
+    create_accumulator,
+    create_partial_product_accumulator,
+)
 from .neurons import SimpleIFNode, SimpleLIFNode, DynamicThresholdIFNode, SignBitNode
 from .logic_gates import _create_neuron
 from .logic_gates import *

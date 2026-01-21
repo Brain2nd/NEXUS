@@ -363,7 +363,7 @@ class SimpleLIFNode(nn.Module):
         """动态扩展初始化：根据输入形状创建或扩展参数
 
         - 首次调用：初始化为当前输入位宽
-        - 后续调用：如果输入位宽更大，扩展参数
+        - 后续调用：如果输入形状变化，重新初始化参数
         """
         if self.param_shape is None:
             return
@@ -373,6 +373,17 @@ class SimpleLIFNode(nn.Module):
             input_shape = x.shape[1:] if x.dim() > 1 else (1,)
         else:
             input_shape = self.param_shape
+
+        # 检查形状是否变化（支持实例复用不同输入形状）
+        if self._params_initialized and self._beta is not None:
+            current_shape = tuple(self._beta.shape)
+            if current_shape != input_shape:
+                # 形状变化，需要重新初始化
+                self._params_initialized = False
+                self._beta_initialized = False
+                self._threshold_initialized = False
+                self._beta = None
+                self._v_threshold = None
 
         # 首次初始化
         if not self._params_initialized:
@@ -431,7 +442,7 @@ class SimpleLIFNode(nn.Module):
                         self._v_threshold = new_threshold
 
     def forward(self, x):
-        # 动态扩展初始化
+        # 动态扩展初始化（会检测形状变化并重新初始化参数）
         self._maybe_expand_params(x)
 
         # 重新初始化 v 如果形状不匹配（支持多次调用不同大小输入）

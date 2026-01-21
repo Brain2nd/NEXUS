@@ -51,11 +51,14 @@ def float64_to_bits(f):
 
 
 def make_fp64_constant(val, batch_shape, device):
-    """创建FP64常量脉冲"""
+    """创建FP64常量脉冲 (向量化实现)"""
     bits = float64_to_bits(val)
-    pulse = torch.zeros(batch_shape + (64,), device=device)
-    for i in range(64):
-        pulse[..., i] = float((bits >> (63 - i)) & 1)
+    # 向量化位提取 - 纯 PyTorch
+    bit_positions = torch.arange(63, -1, -1, dtype=torch.int64)
+    bit_values = torch.tensor([(bits >> p) & 1 for p in bit_positions.tolist()],
+                              dtype=torch.float32, device=device)
+    # 广播到 batch_shape
+    pulse = bit_values.expand(batch_shape + (64,)).clone()
     return pulse
 
 

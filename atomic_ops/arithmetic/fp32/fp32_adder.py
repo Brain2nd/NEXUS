@@ -232,10 +232,8 @@ class SpikeFP32Adder(nn.Module):
         round_pre = self.vec_mux(result_carry, round_overflow, round_norm)
         sticky_pre_raw = self.vec_mux(result_carry, sticky_overflow, sticky_norm)
 
-        # 合并shift_sticky
-        not_diff = self.vec_not(is_diff_sign)
-        add_shift_sticky = self.vec_and(not_diff, shift_sticky)
-        sticky_pre = self.vec_or(sticky_pre_raw, add_shift_sticky)
+        # 合并shift_sticky - 始终合并，加法和减法的RNE舍入都需要
+        sticky_pre = self.vec_or(sticky_pre_raw, shift_sticky)
 
         # 下溢选择
         m_selected = self.vec_mux(is_underflow.expand_as(m_subnorm), m_subnorm, m_pre)

@@ -156,7 +156,7 @@ def pulse_to_float16(pulse):
         pulse: 脉冲张量 [..., 16]，MSB-first
 
     Returns:
-        float16 张量 [...] (返回为 float32 以便计算)
+        float16 张量 [...]
     """
     device = pulse.device
     shape = pulse.shape[:-1]
@@ -166,8 +166,8 @@ def pulse_to_float16(pulse):
     for i in range(16):
         bits_int = bits_int + ((pulse[..., i] > 0.5).short() << (15 - i))
 
-    # 位重解释: int16 -> float16 -> float32
-    return bits_int.view(torch.float16).float()
+    # 位重解释: int16 -> float16
+    return bits_int.view(torch.float16)
 
 
 # ==============================================================================

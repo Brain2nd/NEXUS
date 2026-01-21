@@ -82,25 +82,34 @@ class VecRippleCarryAdder108Bit(nn.Module):
 # 向量化54x54 阵列乘法器
 # ==============================================================================
 class VecArrayMultiplier54x54(nn.Module):
-    """54x54位阵列乘法器 - 向量化版本
-    
+    """54x54位阵列乘法器 - 向量化版本 (解耦累加器)
+
     使用部分积累加方式:
     - 54个部分积, 每个54位
-    - 逐级累加生成108位结果
-    
+    - 使用 PartialProductAccumulator 累加生成108位结果
+
     输入: A, B: [..., 54] (LSB first)
     输出: P: [..., 108] (LSB first)
+
+    Args:
+        neuron_template: 神经元模板
+        accumulator_mode: 累加模式 ('sequential' 或 'parallel')
     """
-    def __init__(self, neuron_template=None):
+    def __init__(self, neuron_template=None, accumulator_mode='sequential'):
         super().__init__()
         nt = neuron_template
+        self.accumulator_mode = accumulator_mode
+
         # 部分积生成: 使用单个VecAND处理所有位
         self.pp_and = VecAND(neuron_template=nt)
-        # 累加器链
-        self.accum_adders = nn.ModuleList([
-            VecRippleCarryAdder108Bit(neuron_template=nt) for _ in range(53)
-        ])
-        
+
+        # 解耦累加器 - 单个加法器 + 累加策略
+        from atomic_ops.core.accumulator import create_partial_product_accumulator
+        self.accum_adder = VecRippleCarryAdder108Bit(neuron_template=nt)
+        self.accumulator = create_partial_product_accumulator(
+            self.accum_adder, mode=accumulator_mode
+        )
+
     def forward(self, A, B):
         """
         A, B: [..., 54] LSB first
@@ -109,7 +118,7 @@ class VecArrayMultiplier54x54(nn.Module):
         device = A.device
         batch_shape = A.shape[:-1]
         zeros = torch.zeros(batch_shape + (1,), device=device)
-        
+
         # 生成所有部分积
         partial_products = []
         for i in range(54):
@@ -117,11 +126,11 @@ class VecArrayMultiplier54x54(nn.Module):
             # 广播B[i]到所有A的位
             b_i = B[..., i:i+1].expand_as(A)
             pp_bits = self.pp_and(A, b_i)  # 向量化AND
-            
+
             # 扩展到108位, 低位补零 (移位)
             low_zeros = zeros.expand(batch_shape + (i,)) if i > 0 else None
             high_zeros = zeros.expand(batch_shape + (108 - 54 - i,)) if (108 - 54 - i) > 0 else None
-            
+
             if i == 0:
                 pp_108 = torch.cat([pp_bits, high_zeros], dim=-1)
             elif (108 - 54 - i) == 0:
@@ -129,18 +138,16 @@ class VecArrayMultiplier54x54(nn.Module):
             else:
                 pp_108 = torch.cat([low_zeros, pp_bits, high_zeros], dim=-1)
             partial_products.append(pp_108)
-        
-        # 累加所有部分积
-        result = partial_products[0]
-        for i in range(1, 54):
-            result, _ = self.accum_adders[i-1](result, partial_products[i])
-        
+
+        # 使用解耦累加器累加所有部分积
+        result = self.accumulator(partial_products)
+
         return result
-    
+
     def reset(self):
         self.pp_and.reset()
-        for adder in self.accum_adders:
-            adder.reset()
+        self.accum_adder.reset()
+        self.accumulator.reset()
 
 
 # ==============================================================================
@@ -279,8 +286,9 @@ class SpikeFP64Multiplier(nn.Module):
 
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
+        accumulator_mode: 累加模式 ('sequential' 或 'parallel')
     """
-    def __init__(self, neuron_template=None):
+    def __init__(self, neuron_template=None, accumulator_mode='sequential'):
         super().__init__()
         nt = neuron_template
 
@@ -317,7 +325,9 @@ class SpikeFP64Multiplier(nn.Module):
         self.exp_lzc_sub = VecSubtractor12Bit(neuron_template=nt)
         
         # ===== 尾数乘法 =====
-        self.mantissa_mul = VecArrayMultiplier54x54(neuron_template=nt)
+        self.mantissa_mul = VecArrayMultiplier54x54(
+            neuron_template=nt, accumulator_mode=accumulator_mode
+        )
         
         # ===== 规格化 =====
         self.lzd = VecLeadingZeroDetector108(neuron_template=nt)

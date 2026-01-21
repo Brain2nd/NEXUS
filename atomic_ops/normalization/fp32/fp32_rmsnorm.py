@@ -32,6 +32,7 @@ import torch
 import torch.nn as nn
 
 from atomic_ops.core.training_mode import TrainingMode
+from atomic_ops.core.accumulator import create_accumulator
 from atomic_ops.core.logic_gates import (ANDGate, ORGate, XORGate, NOTGate, MUXGate)
 from atomic_ops.arithmetic.fp64.fp64_mul import SpikeFP64Multiplier
 from atomic_ops.arithmetic.fp64.fp64_adder import SpikeFP64Adder
@@ -50,9 +51,10 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
         training_mode: 训练模式 (None/TrainingMode.STE/TrainingMode.TEMPORAL)
             - False (默认): 纯推理模式
             - True: 训练模式，使用 STE 反向传播
+        accumulator_mode: 累加模式 ('sequential' 或 'parallel')
     """
     def __init__(self, normalized_shape, eps=1e-6, neuron_template=None,
-                 training_mode=None):
+                 training_mode=None, accumulator_mode='sequential'):
         super().__init__()
         if isinstance(normalized_shape, int):
             self.dim = normalized_shape
@@ -69,8 +71,9 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
 
         self.mul_sq = SpikeFP64Multiplier(neuron_template=nt)
 
-        # Reduction Tree Adders: Need dim-1 adders
-        self.adders_tree = nn.ModuleList([SpikeFP64Adder(neuron_template=nt) for _ in range(self.dim - 1)])
+        # 解耦累加器 - 使用可复用的加法器 + 累加策略
+        self.adder_accum = SpikeFP64Adder(neuron_template=nt)
+        self.accumulator = create_accumulator(self.adder_accum, mode=accumulator_mode)
 
         self.div_mean = SpikeFP64Divider(neuron_template=nt)
         self.adder_eps = SpikeFP64Adder(neuron_template=nt)
@@ -94,25 +97,8 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
             # 2. x^2
             x_sq = self.mul_sq(x_fp64, x_fp64)
 
-            # 3. Sum(x^2) using tree
-            # List of tensors to sum
-            to_sum = [x_sq[..., i, :] for i in range(self.dim)]
-
-            adder_idx = 0
-            while len(to_sum) > 1:
-                new_sum = []
-                # Pairwise sum
-                for i in range(0, len(to_sum), 2):
-                    if i + 1 < len(to_sum):
-                        # Use unique adder
-                        res = self.adders_tree[adder_idx](to_sum[i], to_sum[i+1])
-                        adder_idx += 1
-                        new_sum.append(res)
-                    else:
-                        new_sum.append(to_sum[i])
-                to_sum = new_sum
-
-            sum_sq = to_sum[0]
+            # 3. Sum(x^2) using decoupled accumulator
+            sum_sq = self.accumulator.reduce(x_sq, dim=-2)
 
             # 4. Mean = Sum / N
             N_const = make_fp64_constant(float(self.dim), batch_shape, device)
@@ -151,29 +137,20 @@ class SpikeFP32RMSNormFullFP64(nn.Module):
         return out_pulse
 
     def _float_to_pulse_tensor(self, t, device):
-        # Convert tensor of floats to tensor of bits [..., 32]
-        import struct
-        flat = t.view(-1)
-        pulses = []
-        for val in flat:
-            bits = struct.unpack('>I', struct.pack('>f', val.item()))[0]
-            p = torch.zeros(32, device=device)
-            for i in range(32):
-                p[i] = float((bits >> (31-i)) & 1)
-            pulses.append(p)
-        return torch.stack(pulses).view(t.shape + (32,))
+        """Convert tensor of floats to tensor of bits [..., 32] (向量化实现)"""
+        from atomic_ops.encoding.converters import float32_to_pulse
+        return float32_to_pulse(t.to(device), device=device)
 
     def reset(self):
         self.to_fp64.reset()
         self.to_fp64_w.reset()
         self.to_fp32.reset()
         self.mul_sq.reset()
+        self.adder_accum.reset()
+        self.accumulator.reset()
         self.div_mean.reset()
         self.adder_eps.reset()
         self.sqrt.reset()
         self.div_inv.reset()
         self.mul_scale.reset()
         self.mul_w.reset()
-
-        if hasattr(self, 'adders_tree'):
-            for a in self.adders_tree: a.reset()
