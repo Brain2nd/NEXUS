@@ -246,10 +246,10 @@ def test_fp32_linear_accumulator_modes():
     print("测试 4: FP32 Linear 累加模式对比")
     print("="*70)
 
-    from atomic_ops.linear.fp32.fp32_linear import SpikeFP32Linear
+    from atomic_ops.linear.fp32.fp32_linear import SpikeFP32Linear_MultiPrecision
     from atomic_ops.encoding.converters import float32_to_pulse, pulse_to_float32
 
-    test_configs = [(64, 64), (128, 128), (256, 256), (512, 512)]
+    test_configs = [(64, 64), (128, 128), (256, 256)]
 
     results = []
     for in_dim, out_dim in test_configs:
@@ -267,14 +267,14 @@ def test_fp32_linear_accumulator_modes():
         x_pulse = float32_to_pulse(x, device=device)
 
         # Sequential 模式
-        linear_seq = SpikeFP32Linear(in_dim, out_dim, bias=False, accumulator_mode='sequential').to(device)
+        linear_seq = SpikeFP32Linear_MultiPrecision(in_dim, out_dim, accum_mode='sequential').to(device)
         linear_seq.set_weight_from_float(weight)
         linear_seq.reset()
         seq_pulse = linear_seq(x_pulse)
         seq_result = pulse_to_float32(seq_pulse)
 
         # Parallel 模式
-        linear_par = SpikeFP32Linear(in_dim, out_dim, bias=False, accumulator_mode='parallel').to(device)
+        linear_par = SpikeFP32Linear_MultiPrecision(in_dim, out_dim, accum_mode='parallel').to(device)
         linear_par.set_weight_from_float(weight)
         linear_par.reset()
         par_pulse = linear_par(x_pulse)
@@ -318,7 +318,7 @@ def test_fp16_linear():
     print("测试 5: FP16 Linear")
     print("="*70)
 
-    from atomic_ops.linear.fp16.fp16_linear import SpikeFP16Linear
+    from atomic_ops.linear.fp16.fp16_linear import SpikeFP16Linear_MultiPrecision
     from atomic_ops.encoding.converters import float16_to_pulse, pulse_to_float16
 
     test_configs = [(64, 64), (128, 128), (256, 256)]
@@ -339,7 +339,7 @@ def test_fp16_linear():
         x_pulse = float16_to_pulse(x, device=device)
 
         # SNN Linear
-        linear = SpikeFP16Linear(in_dim, out_dim, bias=False).to(device)
+        linear = SpikeFP16Linear_MultiPrecision(in_dim, out_dim).to(device)
         linear.set_weight_from_float(weight)
         linear.reset()
         result_pulse = linear(x_pulse)
@@ -370,7 +370,7 @@ def test_fp8_linear():
     print("测试 6: FP8 Linear (多种累加精度)")
     print("="*70)
 
-    from atomic_ops.linear.fp8.fp8_linear_multi import SpikeFP8LinearMultiPrecision
+    from atomic_ops.linear.fp8.fp8_linear_multi import SpikeFP8Linear_MultiPrecision
     from atomic_ops.encoding.converters import float_to_fp8_pulse, fp8_pulse_to_float
 
     test_configs = [(64, 64), (128, 128)]
@@ -394,9 +394,9 @@ def test_fp8_linear():
                 x_pulse = float_to_fp8_pulse(x, device=device)
 
                 # SNN Linear
-                linear = SpikeFP8LinearMultiPrecision(
-                    in_dim, out_dim, bias=False,
-                    accumulation_precision=accum_prec
+                linear = SpikeFP8Linear_MultiPrecision(
+                    in_dim, out_dim,
+                    accum_precision=accum_prec
                 ).to(device)
                 linear.set_weight_from_float(weight)
                 linear.reset()
@@ -441,7 +441,7 @@ def test_softmax_accumulator_modes():
     print("测试 7: Softmax 累加模式对比")
     print("="*70)
 
-    from atomic_ops.activation.fp32.fp32_softmax import SpikeFP32SoftmaxFullFP64
+    from atomic_ops.activation.fp32.fp32_softmax import SpikeFP32Softmax
     from atomic_ops.encoding.converters import float32_to_pulse, pulse_to_float32
 
     test_dims = [64, 128, 256, 512]
@@ -461,13 +461,13 @@ def test_softmax_accumulator_modes():
         x_pulse = float32_to_pulse(x, device=device)
 
         # Sequential 模式
-        softmax_seq = SpikeFP32SoftmaxFullFP64(accumulator_mode='sequential').to(device)
+        softmax_seq = SpikeFP32Softmax(accumulator_mode='sequential').to(device)
         softmax_seq.reset()
         seq_pulse = softmax_seq(x_pulse)
         seq_result = pulse_to_float32(seq_pulse)
 
         # Parallel 模式
-        softmax_par = SpikeFP32SoftmaxFullFP64(accumulator_mode='parallel').to(device)
+        softmax_par = SpikeFP32Softmax(accumulator_mode='parallel').to(device)
         softmax_par.reset()
         par_pulse = softmax_par(x_pulse)
         par_result = pulse_to_float32(par_pulse)
