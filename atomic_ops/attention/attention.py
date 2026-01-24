@@ -22,10 +22,12 @@
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 import math
 
 from atomic_ops.arithmetic.fp32.fp32_mul import SpikeFP32Multiplier
 from atomic_ops.arithmetic.fp32.fp32_adder import SpikeFP32Adder
+from atomic_ops.core.accumulator import ParallelAccumulator
 from atomic_ops.linear.fp32.fp32_linear import SpikeFP32Linear_MultiPrecision as SpikeFP32Linear
 from atomic_ops.activation.fp32.fp32_softmax import SpikeFP32Softmax
 from .rope import SpikeFP32RoPE
@@ -87,15 +89,15 @@ class SpikeFP32MultiHeadAttention(nn.Module):
         else:
             self.rope = None
 
-        # BatchMatMul 组件: Q×K^T (点积需要 head_dim-1 个累加器)
+        # BatchMatMul 组件: Q×K^T (使用 ParallelAccumulator 树形归约)
         self.qk_mul = SpikeFP32Multiplier(neuron_template=nt)
-        self.qk_adders = nn.ModuleList([
-            SpikeFP32Adder(neuron_template=nt) for _ in range(max(1, self.head_dim - 1))
-        ])
+        self.qk_adder = SpikeFP32Adder(neuron_template=nt)
+        self.qk_acc = ParallelAccumulator(self.qk_adder)
 
-        # BatchMatMul 组件: Attn×V (使用单个 adder 复用)
+        # BatchMatMul 组件: Attn×V (使用 ParallelAccumulator 树形归约)
         self.av_mul = SpikeFP32Multiplier(neuron_template=nt)
         self.av_adder = SpikeFP32Adder(neuron_template=nt)
+        self.av_acc = ParallelAccumulator(self.av_adder)
 
         # Softmax
         self.softmax = SpikeFP32Softmax(neuron_template=nt)
@@ -109,8 +111,8 @@ class SpikeFP32MultiHeadAttention(nn.Module):
             torch.tensor(scale_val), device='cpu'
         ).squeeze(0))  # [32]
 
-        # 掩码 MUX
-        self.mask_mux = VecMUX(neuron_template=nt)
+        # 掩码 MUX (FP32 = 32位)
+        self.mask_mux = VecMUX(neuron_template=nt, max_param_shape=(32,))
 
         # -inf 常量 (用于掩码)
         self.register_buffer('neg_inf_pulse', float32_to_pulse(
@@ -245,13 +247,10 @@ class SpikeFP32MultiHeadAttention(nn.Module):
         # products: [batch, heads, seq_q, seq_k, head_dim, 32]
         products = self.qk_mul(Q_expanded, K_expanded)
 
-        # 沿 head_dim 维度累加 (点积)
-        acc = products[..., 0, :]  # [batch, heads, seq_q, seq_k, 32]
-
-        for i in range(1, self.head_dim):
-            acc = self.qk_adders[i - 1](acc, products[..., i, :])
-
-        return acc
+        # 沿 head_dim 维度累加 (点积) - 使用 ParallelAccumulator 树形归约
+        # products: [batch, heads, seq_q, seq_k, head_dim, 32]
+        # reduce dim=-2 (head_dim) -> [batch, heads, seq_q, seq_k, 32]
+        return self.qk_acc.reduce(products, dim=-2)
 
     def _batched_matmul_av(self, attn, V):
         """Attn × V 矩阵乘法
@@ -263,8 +262,6 @@ class SpikeFP32MultiHeadAttention(nn.Module):
         Returns:
             [batch, heads, seq_q, head_dim, 32]
         """
-        seq_k = V.shape[2]
-
         # 广播扩展
         # attn: [batch, heads, seq_q, seq_k, 1, 32]
         # V: [batch, heads, 1, seq_k, head_dim, 32]
@@ -275,13 +272,14 @@ class SpikeFP32MultiHeadAttention(nn.Module):
         # products: [batch, heads, seq_q, seq_k, head_dim, 32]
         products = self.av_mul(attn_expanded, V_expanded)
 
-        # 沿 seq_k 维度累加 (复用单个 adder)
-        acc = products[..., 0, :, :]  # [batch, heads, seq_q, head_dim, 32]
-
-        for i in range(1, seq_k):
-            acc = self.av_adder(acc, products[..., i, :, :])
-
-        return acc
+        # 沿 seq_k 维度累加 - 使用 ParallelAccumulator 树形归约
+        # products: [batch, heads, seq_q, seq_k, head_dim, 32]
+        # 需要先转置让 seq_k 在 -2 位置，归约后再转回
+        # 原: [batch, heads, seq_q, seq_k, head_dim, 32]
+        # 转: [batch, heads, seq_q, head_dim, seq_k, 32]
+        products_t = products.transpose(-3, -2)
+        # reduce dim=-2 (seq_k) -> [batch, heads, seq_q, head_dim, 32]
+        return self.av_acc.reduce(products_t, dim=-2)
 
     def _apply_mask(self, scores, mask, device):
         """应用注意力掩码
@@ -323,10 +321,8 @@ class SpikeFP32MultiHeadAttention(nn.Module):
         self.out_proj.set_weight_from_float(out_weight)
 
     def reset(self):
-        """重置所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 # ==============================================================================
@@ -451,10 +447,8 @@ class SpikeMultiHeadAttention(nn.Module):
         self.attention.set_weights_from_float(q_weight, k_weight, v_weight, out_weight)
 
     def reset(self):
-        """重置所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 # ==============================================================================

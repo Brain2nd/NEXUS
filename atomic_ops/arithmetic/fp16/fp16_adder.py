@@ -7,8 +7,9 @@ FP16 格式: [S | E4 E3 E2 E1 E0 | M9..M0], bias=15
 """
 import torch
 import torch.nn as nn
-from atomic_ops.core.logic_gates import (ANDGate, ORGate, XORGate, NOTGate, MUXGate,
-                          HalfAdder, FullAdder, RippleCarryAdder, ORTree)
+from atomic_ops.core.logic_gates import (HalfAdder, FullAdder, ORTree)
+# 单比特门改用 Vec* 版本（支持 max_param_shape）
+# 注意：使用 VecAdder 代替旧的 RippleCarryAdder（支持 max_param_shape）
 from atomic_ops.core.vec_logic_gates import (
     VecAND, VecOR, VecXOR, VecNOT, VecMUX, VecORTree, VecANDTree,
     VecFullAdder, VecAdder, VecSubtractor
@@ -45,10 +46,12 @@ class BarrelShifterRight16(BarrelShifterRightNBit):
 
 class BarrelShifterLeft16(nn.Module):
     """16位桶形左移位器（归一化）- 向量化"""
+    MAX_BITS = 16
+
     def __init__(self, neuron_template=None):
         super().__init__()
         # 向量化 MUX (单实例复用)
-        self.vec_mux = VecMUX(neuron_template=neuron_template)
+        self.vec_mux = VecMUX(neuron_template=neuron_template, max_param_shape=(self.MAX_BITS,))
             
     def forward(self, X, shift):
         """X: [..., 16], shift: [..., 4] (MSB first, 只用低4位)"""
@@ -74,15 +77,20 @@ class BarrelShifterLeft16(nn.Module):
 
 class LeadingZeroDetector16(nn.Module):
     """16位前导零检测器 - 输出4位LZC (向量化SNN)"""
+    MAX_BITS = 16
+
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
+        max_shape_16 = (self.MAX_BITS,)
+        max_shape_4 = (4,)
+        max_shape_1 = (1,)
         # 向量化门电路 (复用单实例)
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
-        self.vec_or_tree = VecORTree(neuron_template=nt)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_4)
+        self.vec_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_16)
         
     def forward(self, X):
         """X: [..., 16], returns: [..., 4] (LZC, MSB first)"""
@@ -130,9 +138,13 @@ class LeadingZeroDetector16(nn.Module):
 
 class RippleCarryAdder16(nn.Module):
     """16位加法器 - 向量化"""
+    MAX_BITS = 16
+
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.vec_adder = VecAdder(16, neuron_template=neuron_template)
+        # 预分配参数形状
+        max_shape = (self.MAX_BITS,)
+        self.vec_adder = VecAdder(16, neuron_template=neuron_template, max_param_shape=max_shape)
         
     def forward(self, A, B, Cin=None):
         """A, B: [..., 16] LSB first"""
@@ -172,20 +184,20 @@ class SpikeFP16Adder(nn.Module):
         self.exp_sub_ab = Subtractor5Bit(neuron_template=nt)
         self.exp_sub_ba = Subtractor5Bit(neuron_template=nt)
         # 单实例 (动态扩展机制支持不同位宽)
-        self.exp_diff_mux = MUXGate(neuron_template=nt)
+        self.exp_diff_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== 绝对值比较 =====
-        self.abs_eq_and = ANDGate(neuron_template=nt)
-        self.mant_ge_or = ORGate(neuron_template=nt)
-        self.abs_ge_and = ANDGate(neuron_template=nt)
-        self.abs_ge_or = ORGate(neuron_template=nt)
+        self.abs_eq_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.mant_ge_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.abs_ge_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.abs_ge_or = VecOR(neuron_template=nt, max_param_shape=(1,))
 
         # ===== E=0 检测 =====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.e_zero_or = ORGate(neuron_template=nt)
-        self.e_zero_not = NOTGate(neuron_template=nt)
-        self.subnorm_exp_mux_a = MUXGate(neuron_template=nt)
-        self.subnorm_exp_mux_b = MUXGate(neuron_template=nt)
+        self.e_zero_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.e_zero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.subnorm_exp_mux_a = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.subnorm_exp_mux_b = VecMUX(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 对齐移位器 =====
         self.align_shifter = BarrelShifterRight16(neuron_template=nt)
@@ -195,20 +207,20 @@ class SpikeFP16Adder(nn.Module):
         self.mantissa_sub = Subtractor16Bit(neuron_template=nt)
         
         # ===== 符号处理 =====
-        self.sign_xor = XORGate(neuron_template=nt)
-        self.exact_cancel_and = ANDGate(neuron_template=nt)
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
+        self.exact_cancel_and = VecAND(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 交换逻辑 =====
-        self.swap_mux_s = MUXGate(neuron_template=nt)
+        self.swap_mux_s = VecMUX(neuron_template=nt, max_param_shape=(1,))
         # 单实例 (动态扩展机制支持不同位宽)
-        self.swap_mux_e = MUXGate(neuron_template=nt)
-        self.swap_mux_m = MUXGate(neuron_template=nt)
+        self.swap_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.swap_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== 结果选择 (Step 5: sum vs diff) =====
-        self.result_mux = MUXGate(neuron_template=nt)
+        self.result_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== 尾数路径选择 (Step 7: overflow vs normal) =====
-        self.mant_path_mux = MUXGate(neuron_template=nt)
+        self.mant_path_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 归一化 =====
         self.lzd = LeadingZeroDetector16(neuron_template=nt)
@@ -217,47 +229,47 @@ class SpikeFP16Adder(nn.Module):
         
         # ===== 溢出处理 =====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.exp_overflow_mux = MUXGate(neuron_template=nt)
-        self.post_round_exp_inc = RippleCarryAdder(bits=5, neuron_template=nt)
+        self.exp_overflow_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.post_round_exp_inc = VecAdder(bits=5, neuron_template=nt, max_param_shape=(5,))
 
         # ===== 下溢处理 =====
         self.underflow_cmp = Comparator5Bit(neuron_template=nt)
-        self.underflow_or = ORGate(neuron_template=nt)
-        self.underflow_not = NOTGate(neuron_template=nt)  # NOT(is_underflow) 用于舍入控制
-        self.and_do_round = ANDGate(neuron_template=nt)  # do_round AND not_underflow (纯SNN)
+        self.underflow_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.underflow_not = VecNOT(neuron_template=nt, max_param_shape=(1,))  # NOT(is_underflow) 用于舍入控制
+        self.and_do_round = VecAND(neuron_template=nt, max_param_shape=(1,))  # do_round AND not_underflow (纯SNN)
         # 单实例 (动态扩展机制支持不同位宽)
-        self.underflow_mux_e = MUXGate(neuron_template=nt)
-        self.underflow_mux_m = MUXGate(neuron_template=nt)
+        self.underflow_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.underflow_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 舍入 =====
-        self.round_or = ORGate(neuron_template=nt)
-        self.round_and = ANDGate(neuron_template=nt)
-        self.round_adder = RippleCarryAdder(bits=11, neuron_template=nt)  # hidden + 10 mant
+        self.round_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.round_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.round_adder = VecAdder(bits=11, neuron_template=nt, max_param_shape=(11,))  # hidden + 10 mant
         
         # ===== 最终选择 =====
-        self.cancel_mux_s = MUXGate(neuron_template=nt)
+        self.cancel_mux_s = VecMUX(neuron_template=nt, max_param_shape=(1,))
         # 单实例 (动态扩展机制支持不同位宽)
-        self.cancel_mux_e = MUXGate(neuron_template=nt)
-        self.cancel_mux_m = MUXGate(neuron_template=nt)
+        self.cancel_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.cancel_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== 溢出到NaN =====
-        self.exp_overflow_and = ANDGate(neuron_template=nt)
-        self.nan_mux_s = MUXGate(neuron_template=nt)
+        self.exp_overflow_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.nan_mux_s = VecMUX(neuron_template=nt, max_param_shape=(1,))
         # 单实例 (动态扩展机制支持不同位宽)
-        self.nan_mux_e = MUXGate(neuron_template=nt)
-        self.nan_mux_m = MUXGate(neuron_template=nt)
+        self.nan_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.nan_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== 舍入溢出处理 =====
-        self.not_round_carry = NOTGate(neuron_template=nt)
+        self.not_round_carry = VecNOT(neuron_template=nt, max_param_shape=(1,))
         # 单实例 (动态扩展机制支持不同位宽)
-        self.mant_clear_and = ANDGate(neuron_template=nt)
-        self.round_exp_inc = RippleCarryAdder(bits=5, neuron_template=nt)
-        self.round_exp_mux = MUXGate(neuron_template=nt)
+        self.mant_clear_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.round_exp_inc = VecAdder(bits=5, neuron_template=nt, max_param_shape=(5,))
+        self.round_exp_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== Sticky bit 计算（纯SNN OR门链）=====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.sticky_overflow_or = ORGate(neuron_template=nt)
-        self.sticky_norm_or = ORGate(neuron_template=nt)
+        self.sticky_overflow_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.sticky_norm_or = VecOR(neuron_template=nt, max_param_shape=(1,))
         
     def forward(self, A, B):
         """

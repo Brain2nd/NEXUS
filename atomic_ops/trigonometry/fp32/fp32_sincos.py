@@ -10,6 +10,7 @@ FP32 三角函数 Sin/Cos - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 
 from atomic_ops.arithmetic.fp64.fp64_components import FP32ToFP64Converter, FP64ToFP32Converter
 from atomic_ops.trigonometry.fp64.fp64_sincos import SpikeFP64Sin, SpikeFP64Cos, SpikeFP64SinCos
@@ -52,9 +53,8 @@ class SpikeFP32Sin(nn.Module):
         return result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 class SpikeFP32Cos(nn.Module):
@@ -94,9 +94,8 @@ class SpikeFP32Cos(nn.Module):
         return result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 class SpikeFP32SinCos(nn.Module):
@@ -138,6 +137,5 @@ class SpikeFP32SinCos(nn.Module):
         return sin_result, cos_result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)

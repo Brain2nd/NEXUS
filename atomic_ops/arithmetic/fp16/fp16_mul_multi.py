@@ -17,6 +17,7 @@ FP16 多精度乘法器 - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 
 from .fp16_mul_to_fp32 import SpikeFP16MulToFP32
 from atomic_ops.arithmetic.fp32.fp32_components import FP32ToFP16Converter
@@ -74,12 +75,6 @@ class SpikeFP16Multiplier_MultiPrecision(nn.Module):
         result_fp32 = self.mul(A, B)
         return self.output_converter(result_fp32)
 
-    def reset_all(self):
-        """递归reset所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
-
     def reset(self):
-        """向后兼容"""
-        self.reset_all()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)

@@ -131,22 +131,24 @@ class PulseFloatingPointEncoder(nn.Module):
         for _ in range(mantissa_bits):
             self.delay_nodes.append(DelayNode())
 
-        # 逻辑门 - 纯 SNN 向量化实现
-        self.vec_and_latch_e = VecAND(neuron_template=nt)
-        self.vec_or_accum_e = VecOR(neuron_template=nt)
+        # 逻辑门 - 纯 SNN 向量化实现 (预分配参数形状)
+        max_shape_e = (exponent_bits,)
+        max_shape_m = (mantissa_bits,)
+        self.vec_and_latch_e = VecAND(neuron_template=nt, max_param_shape=max_shape_e)
+        self.vec_or_accum_e = VecOR(neuron_template=nt, max_param_shape=max_shape_e)
 
-        self.vec_and_sample_m = VecAND(neuron_template=nt)
-        self.vec_or_accum_m = VecOR(neuron_template=nt)
+        self.vec_and_sample_m = VecAND(neuron_template=nt, max_param_shape=max_shape_m)
+        self.vec_or_accum_m = VecOR(neuron_template=nt, max_param_shape=max_shape_m)
 
         # 首脉冲检测门电路
-        self.not_fired = NOTGate(neuron_template=nt)
-        self.and_first_spike = ANDGate(neuron_template=nt)
-        self.or_has_fired = ORGate(neuron_template=nt)
+        self.not_fired = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.and_first_spike = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        self.or_has_fired = ORGate(neuron_template=nt, max_param_shape=(1,))
 
         # Subnormal 采样门电路
-        self.not_for_sub = NOTGate(neuron_template=nt)
-        self.and_sub_sample = ANDGate(neuron_template=nt)
-        self.or_sub_m = nn.ModuleList([ORGate(neuron_template=nt) for _ in range(mantissa_bits)])
+        self.not_for_sub = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.and_sub_sample = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        self.or_sub_m = nn.ModuleList([ORGate(neuron_template=nt, max_param_shape=(1,)) for _ in range(mantissa_bits)])
         
         # 寄存器 (累积结果)
         self.register_buffer('e_reg', None)

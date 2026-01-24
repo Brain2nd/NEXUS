@@ -7,8 +7,8 @@ FP64 格式: [S | E10..E0 | M51..M0], bias=1023
 """
 import torch
 import torch.nn as nn
-from atomic_ops.core.logic_gates import (ANDGate, ORGate, XORGate, NOTGate, MUXGate,
-                          HalfAdder, FullAdder, RippleCarryAdder, ORTree, ANDTree)
+from atomic_ops.core.logic_gates import (HalfAdder, FullAdder, ORTree, ANDTree)
+# 注意：使用 VecAdder 代替旧的 RippleCarryAdder（支持 max_param_shape）
 from atomic_ops.core.vec_logic_gates import (VecAND, VecOR, VecXOR, VecNOT, VecMUX,
                                VecORTree, VecANDTree, VecAdder, VecSubtractor)
 
@@ -18,20 +18,24 @@ from atomic_ops.core.vec_logic_gates import (VecAND, VecOR, VecXOR, VecNOT, VecM
 # ==============================================================================
 class Comparator11Bit(nn.Module):
     """11位比较器 (FP64指数) - 向量化SNN实现"""
+    MAX_BITS = 11
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 11
         nt = neuron_template
-        
+        max_shape = (self.MAX_BITS,)
+        max_shape_1 = (1,)
+
         # 向量化门电路 - 单实例 (动态扩展机制支持复用)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_not_xor = VecNOT(neuron_template=nt)
-        self.vec_not_b = VecNOT(neuron_template=nt)
-        self.vec_gt_and = VecAND(neuron_template=nt)
-        self.eq_tree = VecANDTree(neuron_template=nt)
-        self.eq_prefix_and = VecAND(neuron_template=nt)
-        self.result_and = VecAND(neuron_template=nt)
-        self.result_or = VecOR(neuron_template=nt)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_not_xor = VecNOT(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_not_b = VecNOT(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_gt_and = VecAND(neuron_template=nt, max_param_shape=max_shape)
+        self.eq_tree = VecANDTree(neuron_template=nt, max_param_shape=max_shape)
+        self.eq_prefix_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.result_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.result_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
 
     def forward(self, A, B):
         """A, B: [..., 11] (MSB first)"""
@@ -69,20 +73,24 @@ class Comparator11Bit(nn.Module):
 
 class Comparator53Bit(nn.Module):
     """53位比较器 (FP64尾数) - 向量化SNN实现"""
+    MAX_BITS = 53
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 53
         nt = neuron_template
-        
+        max_shape = (self.MAX_BITS,)
+        max_shape_1 = (1,)
+
         # 向量化门电路 - 单实例 (动态扩展机制支持复用)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_not_xor = VecNOT(neuron_template=nt)
-        self.vec_not_b = VecNOT(neuron_template=nt)
-        self.vec_gt_and = VecAND(neuron_template=nt)
-        self.eq_tree = VecANDTree(neuron_template=nt)
-        self.eq_prefix_and = VecAND(neuron_template=nt)
-        self.result_and = VecAND(neuron_template=nt)
-        self.result_or = VecOR(neuron_template=nt)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_not_xor = VecNOT(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_not_b = VecNOT(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_gt_and = VecAND(neuron_template=nt, max_param_shape=max_shape)
+        self.eq_tree = VecANDTree(neuron_template=nt, max_param_shape=max_shape)
+        self.eq_prefix_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.result_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.result_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
 
     def forward(self, A, B):
         """A, B: [..., 53] (MSB first)"""
@@ -120,20 +128,23 @@ class Comparator53Bit(nn.Module):
 
 class Subtractor11Bit(nn.Module):
     """11位减法器 (FP64指数差) - 向量化SNN (LSB first)"""
+    MAX_BITS = 11
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 11
         nt = neuron_template
-        
+        max_shape_1 = (1,)
+
         # 向量化门电路复用
-        self.vec_xor1 = VecXOR(neuron_template=nt)
-        self.vec_xor2 = VecXOR(neuron_template=nt)
-        self.vec_not_a = VecNOT(neuron_template=nt)
-        self.vec_and1 = VecAND(neuron_template=nt)
-        self.vec_and2 = VecAND(neuron_template=nt)
-        self.vec_and3 = VecAND(neuron_template=nt)
-        self.vec_or1 = VecOR(neuron_template=nt)
-        self.vec_or2 = VecOR(neuron_template=nt)
+        self.vec_xor1 = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_xor2 = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_not_a = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and1 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and2 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and3 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or1 = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or2 = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
         
     def forward(self, A, B, Bin=None):
         """A - B, LSB first"""
@@ -177,10 +188,12 @@ class Subtractor11Bit(nn.Module):
 
 class RippleCarryAdder57Bit(nn.Module):
     """57位加法器 (FP64内部精度) - 向量化SNN (LSB first)"""
+    MAX_BITS = 57
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 57
-        self.vec_adder = VecAdder(57, neuron_template=neuron_template)
+        self.vec_adder = VecAdder(57, neuron_template=neuron_template, max_param_shape=(self.MAX_BITS,))
         
     def forward(self, A, B, Cin=None):
         """A + B, LSB first"""
@@ -193,20 +206,23 @@ class RippleCarryAdder57Bit(nn.Module):
 
 class Subtractor57Bit(nn.Module):
     """57位减法器 (FP64内部精度) - 向量化SNN (LSB first)"""
+    MAX_BITS = 57
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 57
         nt = neuron_template
+        max_shape_1 = (1,)
 
         # 向量化门电路复用
-        self.vec_xor1 = VecXOR(neuron_template=nt)
-        self.vec_xor2 = VecXOR(neuron_template=nt)
-        self.vec_not_a = VecNOT(neuron_template=nt)
-        self.vec_and1 = VecAND(neuron_template=nt)
-        self.vec_and2 = VecAND(neuron_template=nt)
-        self.vec_and3 = VecAND(neuron_template=nt)
-        self.vec_or1 = VecOR(neuron_template=nt)
-        self.vec_or2 = VecOR(neuron_template=nt)
+        self.vec_xor1 = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_xor2 = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_not_a = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and1 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and2 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and3 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or1 = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or2 = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
 
     def forward(self, A, B, Bin=None):
         """A - B, LSB first"""
@@ -253,6 +269,8 @@ class Subtractor57Bit(nn.Module):
 # ==============================================================================
 class BarrelShifterRight57(nn.Module):
     """57位桶形右移位器 - 向量化SNN实现"""
+    MAX_BITS = 57
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 57
@@ -260,7 +278,7 @@ class BarrelShifterRight57(nn.Module):
         nt = neuron_template
 
         # 单实例 VecMUX (动态扩展机制支持复用)
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=(self.MAX_BITS,))
             
     def forward(self, X, shift):
         """X: [..., 57], shift: [..., 6] (MSB first)"""
@@ -294,17 +312,21 @@ class BarrelShifterRight57WithSticky(nn.Module):
 
     sticky = OR(所有被移出的位)
     """
+    MAX_BITS = 57
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 57
         self.shift_bits = 6
         nt = neuron_template
+        max_shape_57 = (self.MAX_BITS,)
+        max_shape_1 = (1,)
 
         # 单实例门电路 (动态扩展机制支持复用)
-        self.vec_mux = VecMUX(neuron_template=nt)
-        self.sticky_or_tree = VecORTree(neuron_template=nt)
-        self.sticky_mux = VecMUX(neuron_template=nt)
-        self.sticky_accum_or = VecOR(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_57)
+        self.sticky_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_57)
+        self.sticky_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_1)
+        self.sticky_accum_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
         
     def forward(self, X, shift):
         """X: [..., 57], shift: [..., 6] (MSB first)
@@ -354,6 +376,8 @@ class BarrelShifterRight57WithSticky(nn.Module):
 
 class BarrelShifterLeft57(nn.Module):
     """57位桶形左移位器 - 向量化SNN实现"""
+    MAX_BITS = 57
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 57
@@ -361,7 +385,7 @@ class BarrelShifterLeft57(nn.Module):
         nt = neuron_template
 
         # 单实例 VecMUX (动态扩展机制支持复用)
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=(self.MAX_BITS,))
             
     def forward(self, X, shift):
         """X: [..., 57], shift: [..., 6] (MSB first)"""
@@ -395,22 +419,26 @@ class BarrelShifterLeft57(nn.Module):
 # ==============================================================================
 class LeadingZeroDetector57(nn.Module):
     """57位前导零检测器 - 向量化SNN实现
-    
+
     使用向量化门电路复用
     """
+    MAX_BITS = 57
+
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
+        max_shape_57 = (self.MAX_BITS,)
+        max_shape_1 = (1,)
         # 向量化门电路复用
-        self.vec_not_found = VecNOT(neuron_template=nt)
-        self.vec_and_first = VecAND(neuron_template=nt)
-        self.vec_or_found = VecOR(neuron_template=nt)
-        self.vec_or_lzc = VecOR(neuron_template=nt)
-        
+        self.vec_not_found = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and_first = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or_found = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or_lzc = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+
         # 全零检测
-        self.or_tree = VecORTree(neuron_template=nt)
-        self.vec_not_all_zero = VecNOT(neuron_template=nt)
-        self.vec_or_final = VecOR(neuron_template=nt)
+        self.or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_57)
+        self.vec_not_all_zero = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or_final = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
         
     def forward(self, X):
         """X: [..., 57] MSB first, returns: [..., 6] LZC MSB first"""
@@ -483,22 +511,29 @@ class FP32ToFP64Converter(nn.Module):
         super().__init__()
         nt = neuron_template
 
+        # 预分配参数形状
+        max_shape_64 = (64,)   # FP64 output
+        max_shape_23 = (23,)   # FP32 mantissa
+        max_shape_11 = (11,)   # FP64 exponent
+        max_shape_8 = (8,)     # FP32 exponent
+        max_shape_1 = (1,)     # scalar results
+
         # 向量化检测门电路
-        self.e_or_tree = VecORTree(neuron_template=nt)      # 检测 E≠0
-        self.e_is_zero_not = VecNOT(neuron_template=nt)
-        self.m_or_tree = VecORTree(neuron_template=nt)      # 检测 M≠0
-        self.exp_all_one_and_tree = VecANDTree(neuron_template=nt)  # 检测 E=全1
+        self.e_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_8)      # 检测 E≠0
+        self.e_is_zero_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.m_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_23)      # 检测 M≠0
+        self.exp_all_one_and_tree = VecANDTree(neuron_template=nt, max_param_shape=max_shape_8)  # 检测 E=全1
 
         # 11位加法器: FP32_exp (8位扩展) + 896
-        self.exp_adder = RippleCarryAdder(bits=11, neuron_template=nt)
+        self.exp_adder = VecAdder(bits=11, neuron_template=nt, max_param_shape=(11,))
 
         # 向量化MUX
-        self.exp_mux = VecMUX(neuron_template=nt)           # E=0时选择0指数
-        self.is_nan_and = VecAND(neuron_template=nt)
-        self.mant_zero_not = VecNOT(neuron_template=nt)
-        self.is_inf_and = VecAND(neuron_template=nt)
-        self.nan_mux = VecMUX(neuron_template=nt)           # NaN输出选择
-        self.inf_mux = VecMUX(neuron_template=nt)           # Inf输出选择
+        self.exp_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_11)           # E=0时选择0指数
+        self.is_nan_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_zero_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.is_inf_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.nan_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)           # NaN输出选择
+        self.inf_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)           # Inf输出选择
 
     def forward(self, fp32_pulse):
         """
@@ -603,32 +638,40 @@ class FP64ToFP32Converter(nn.Module):
         self.overflow_cmp = Comparator11Bit(neuron_template=nt)
         self.underflow_cmp = Comparator11Bit(neuron_template=nt)
 
+        # 预分配参数形状
+        max_shape_52 = (52,)   # FP64 mantissa
+        max_shape_32 = (32,)   # FP32 output
+        max_shape_28 = (28,)   # sticky bits
+        max_shape_23 = (23,)   # FP32 mantissa
+        max_shape_11 = (11,)   # FP64 exponent
+        max_shape_1 = (1,)     # scalar results
+
         # 向量化 NaN/Inf 检测
-        self.nan_exp_and_tree = VecANDTree(neuron_template=nt)
-        self.nan_mant_or_tree = VecORTree(neuron_template=nt)
-        self.is_nan_and = VecAND(neuron_template=nt)
-        self.mant_zero_not = VecNOT(neuron_template=nt)
-        self.is_inf_and = VecAND(neuron_template=nt)
+        self.nan_exp_and_tree = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.nan_mant_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_52)
+        self.is_nan_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_zero_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.is_inf_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 向量化 RNE 舍入
-        self.sticky_or_tree = VecORTree(neuron_template=nt)
-        self.rne_or = VecOR(neuron_template=nt)
-        self.rne_and = VecAND(neuron_template=nt)
+        self.sticky_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_28)
+        self.rne_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.rne_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 尾数+1
-        self.mant_inc = RippleCarryAdder(bits=24, neuron_template=nt)
-        self.not_carry = VecNOT(neuron_template=nt)
-        self.mant_clear_and = VecAND(neuron_template=nt)
+        self.mant_inc = VecAdder(bits=24, neuron_template=nt, max_param_shape=(24,))
+        self.not_carry = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_clear_and = VecAND(neuron_template=nt, max_param_shape=max_shape_23)
 
         # 指数+1
-        self.exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.exp_inc = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
 
         # 向量化结果选择MUX
-        self.round_exp_mux = VecMUX(neuron_template=nt)
-        self.overflow_mux = VecMUX(neuron_template=nt)
-        self.underflow_mux = VecMUX(neuron_template=nt)
-        self.nan_mux = VecMUX(neuron_template=nt)
-        self.inf_mux = VecMUX(neuron_template=nt)
+        self.round_exp_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_32)
+        self.overflow_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_32)
+        self.underflow_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_32)
+        self.nan_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_32)
+        self.inf_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_32)
 
     def forward(self, fp64_pulse):
         """

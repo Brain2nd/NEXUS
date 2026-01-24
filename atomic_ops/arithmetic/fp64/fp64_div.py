@@ -34,19 +34,26 @@ from atomic_ops.core.vec_logic_gates import (
 
 class VecDivIteration(nn.Module):
     """向量化除法迭代 - 一次处理所有样本
-    
+
     恢复余数算法：
     1. 尝试 R - D
     2. 如果 R >= D (无借位)，Q=1，R=R-D
     3. 如果 R < D (有借位)，Q=0，R保持不变
     """
+    MAX_BITS = 55  # FP64 除法迭代最大位宽
 
     def __init__(self, bits, neuron_template=None):
         super().__init__()
         self.bits = bits
-        self.sub = VecSubtractor(bits, neuron_template=neuron_template)
-        self.not_borrow = VecNOT(neuron_template=neuron_template)
-        self.mux = VecMUX(neuron_template=neuron_template)
+        nt = neuron_template
+
+        # 预分配参数形状
+        max_shape = (bits,)
+        max_shape_1 = (1,)
+
+        self.sub = VecSubtractor(bits, neuron_template=nt, max_param_shape=max_shape)
+        self.not_borrow = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mux = VecMUX(neuron_template=nt, max_param_shape=max_shape)
         
     def forward(self, R, D):
         """
@@ -88,68 +95,79 @@ class SpikeFP64Divider(nn.Module):
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
+
+        # 预分配参数形状
+        max_shape_64 = (64,)
+        max_shape_55 = (55,)
+        max_shape_52 = (52,)
+        max_shape_13 = (13,)
+        max_shape_11 = (11,)
+        max_shape_4 = (4,)
+        max_shape_3 = (3,)
+        max_shape_2 = (2,)
+        max_shape_1 = (1,)
+
         # ===== 符号 =====
-        self.sign_xor = VecXOR(neuron_template=nt)
-        
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+
         # ===== 指数运算 =====
-        self.exp_sub = VecSubtractor(13, neuron_template=nt)  # 13位防溢出
-        self.exp_add = VecAdder(13, neuron_template=nt)
-        
+        self.exp_sub = VecSubtractor(13, neuron_template=nt, max_param_shape=max_shape_13)  # 13位防溢出
+        self.exp_add = VecAdder(13, neuron_template=nt, max_param_shape=max_shape_13)
+
         # ===== 特殊值检测 =====
         # 指数全1检测 (11-bit): e_a_all_one, e_b_all_one
-        self.exp_and_tree_a = VecANDTree(neuron_template=nt)
-        self.exp_and_tree_b = VecANDTree(neuron_template=nt)
+        self.exp_and_tree_a = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.exp_and_tree_b = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 指数非零检测 (11-bit): e_a_any, e_b_any
-        self.exp_or_tree_a = VecORTree(neuron_template=nt)
-        self.exp_or_tree_b = VecORTree(neuron_template=nt)
+        self.exp_or_tree_a = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.exp_or_tree_b = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 溢出检测指数高位 (2-bit)
-        self.exp_or_tree_overflow = VecORTree(neuron_template=nt)
+        self.exp_or_tree_overflow = VecORTree(neuron_template=nt, max_param_shape=max_shape_2)
 
         # 下溢检测指数 (13-bit)
-        self.exp_or_tree_underflow = VecORTree(neuron_template=nt)
+        self.exp_or_tree_underflow = VecORTree(neuron_template=nt, max_param_shape=max_shape_13)
 
         # 尾数非零检测 (52-bit): m_a_any, m_b_any
-        self.mant_or_tree_a = VecORTree(neuron_template=nt)
-        self.mant_or_tree_b = VecORTree(neuron_template=nt)
+        self.mant_or_tree_a = VecORTree(neuron_template=nt, max_param_shape=max_shape_52)
+        self.mant_or_tree_b = VecORTree(neuron_template=nt, max_param_shape=max_shape_52)
 
         # 余数非零检测 (55-bit)
-        self.mant_or_tree_remainder = VecORTree(neuron_template=nt)
+        self.mant_or_tree_remainder = VecORTree(neuron_template=nt, max_param_shape=max_shape_55)
 
         # sticky检测 - normal路径 (4-bit)
-        self.mant_or_tree_sticky_normal = VecORTree(neuron_template=nt)
+        self.mant_or_tree_sticky_normal = VecORTree(neuron_template=nt, max_param_shape=max_shape_4)
 
         # sticky检测 - shifted路径 (3-bit)
-        self.mant_or_tree_sticky_shifted = VecORTree(neuron_template=nt)
+        self.mant_or_tree_sticky_shifted = VecORTree(neuron_template=nt, max_param_shape=max_shape_3)
 
-        self.not_gate = VecNOT(neuron_template=nt)
-        self.and_gate = VecAND(neuron_template=nt)
-        self.or_gate = VecOR(neuron_template=nt)
-        
+        self.not_gate = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.and_gate = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.or_gate = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+
         # ===== 尾数除法 (55位用于54位尾数+1位扩展) =====
         # 109次迭代产生足够精度
         self.div_iterations = nn.ModuleList([VecDivIteration(55, neuron_template=nt) for _ in range(109)])
-        
+
         # ===== 尾数比较 =====
-        self.mant_cmp = VecSubtractor(55, neuron_template=nt)
-        
+        self.mant_cmp = VecSubtractor(55, neuron_template=nt, max_param_shape=max_shape_55)
+
         # ===== RNE舍入 =====
-        self.rne_or = VecOR(neuron_template=nt)
-        self.rne_and = VecAND(neuron_template=nt)
-        self.round_adder = VecAdder(53, neuron_template=nt)
-        
+        self.rne_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.rne_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.round_adder = VecAdder(53, neuron_template=nt, max_param_shape=(53,))
+
         # ===== 归一化选择 =====
-        self.normalize_mux = VecMUX(neuron_template=nt)
-        self.exp_mux = VecMUX(neuron_template=nt)
-        
+        self.normalize_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_52)
+        self.exp_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_13)
+
         # ===== 特殊值输出选择 =====
-        self.nan_mux = VecMUX(neuron_template=nt)
-        self.inf_mux = VecMUX(neuron_template=nt)
-        self.zero_mux = VecMUX(neuron_template=nt)
-        self.overflow_mux = VecMUX(neuron_template=nt)
-        self.underflow_mux = VecMUX(neuron_template=nt)
+        self.nan_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
+        self.inf_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
+        self.zero_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
+        self.overflow_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
+        self.underflow_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
         
     def forward(self, A, B):
         A, B = torch.broadcast_tensors(A, B)

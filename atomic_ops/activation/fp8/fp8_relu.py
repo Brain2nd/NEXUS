@@ -42,8 +42,11 @@ class SpikeFP8ReLU(nn.Module):
         super().__init__()
         self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_and = VecAND(neuron_template=nt)
+        # 预分配参数形状 (FP8 = 8位)
+        max_shape_8 = (8,)
+        max_shape_1 = (1,)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_8)
     
     def forward(self, x_pulse):
         """
@@ -96,8 +99,11 @@ class SpikeFP32ReLU(nn.Module):
         super().__init__()
         self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_and = VecAND(neuron_template=nt)
+        # 预分配参数形状 (FP8 = 8位)
+        max_shape_8 = (8,)
+        max_shape_1 = (1,)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_8)
 
     def forward(self, x_pulse):
         """
@@ -147,8 +153,11 @@ class SpikeFP64ReLU(nn.Module):
         super().__init__()
         self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_and = VecAND(neuron_template=nt)
+        # 预分配参数形状 (FP8 = 8位)
+        max_shape_8 = (8,)
+        max_shape_1 = (1,)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_8)
 
     def forward(self, x_pulse):
         """

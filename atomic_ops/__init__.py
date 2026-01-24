@@ -51,6 +51,14 @@ from .core.accumulator import (
     create_partial_product_accumulator,
 )
 
+# 脉冲存储优化 (bool 存储, 4x 内存节省)
+from .core.pulse_storage import (
+    PulseTensor,
+    pulse_to_bool,
+    bool_to_pulse,
+    calculate_memory_savings,
+)
+
 # STE (Straight-Through Estimator) for SNN training
 from .core.ste import (
     # Autograd Functions

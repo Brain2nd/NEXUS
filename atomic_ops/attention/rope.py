@@ -21,6 +21,7 @@ RoPE 数学原理:
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 import math
 import struct
 
@@ -157,10 +158,16 @@ class SpikeFP32RoPE(nn.Module):
         self.add_odd = SpikeFP32Adder(neuron_template=nt)
 
         # 符号翻转 (使用 VecXOR)
-        self.sign_xor = VecXOR(neuron_template=nt)
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
 
     def forward(self, x, position):
-        """应用 RoPE (向量化)
+        """应用 RoPE (向量化) - 与 HuggingFace 实现一致
+
+        使用前后半分割 (HF 标准):
+            x_first = x[:, :half_dim]
+            x_second = x[:, half_dim:]
+            rotate_half(x) = [-x_second, x_first]
+            result = x * cos + rotate_half(x) * sin
 
         Args:
             x: [batch, head_dim, 32] FP32 脉冲
@@ -181,10 +188,10 @@ class SpikeFP32RoPE(nn.Module):
         if position.numel() == 1:
             position = position.expand(batch_size)
 
-        # 分离偶数和奇数维度
+        # HF 风格: 前后半分割 (不是奇偶分割)
         # x: [batch, head_dim, 32]
-        x_even = x[:, 0::2, :]  # [batch, half_dim, 32]
-        x_odd = x[:, 1::2, :]   # [batch, half_dim, 32]
+        x_first = x[:, :self.half_dim, :]   # [batch, half_dim, 32] 前半
+        x_second = x[:, self.half_dim:, :]  # [batch, half_dim, 32] 后半
 
         # ========== 纯 SNN 计算 theta × position ==========
         # 1. 懒加载编码 theta 到脉冲 (边界编码，仅执行一次)
@@ -212,52 +219,49 @@ class SpikeFP32RoPE(nn.Module):
         angle_flat = angle_pulses.view(-1, 32)
         sin_flat, cos_flat = self.sincos(angle_flat)
 
-        # 恢复形状
-        sin_angle = sin_flat.view(batch_size, self.half_dim, 32)  # [batch, half_dim, 32]
+        # 恢复形状: [batch, half_dim, 32]
+        sin_angle = sin_flat.view(batch_size, self.half_dim, 32)
         cos_angle = cos_flat.view(batch_size, self.half_dim, 32)
 
-        # 旋转计算 (向量化)
-        # x'_even = x_even * cos - x_odd * sin
-        # x'_odd = x_even * sin + x_odd * cos
+        # HF 风格: cos/sin 需要扩展到完整 head_dim (通过 cat 重复)
+        # cos/sin 在 HF 中是 [batch, seq, head_dim]，其中前后半相同
+        # emb = torch.cat((freqs, freqs), dim=-1) 所以 cos/sin 前后半相同
+        cos_full = torch.cat([cos_angle, cos_angle], dim=1)  # [batch, head_dim, 32]
+        sin_full = torch.cat([sin_angle, sin_angle], dim=1)  # [batch, head_dim, 32]
 
+        # rotate_half: [-x_second, x_first]
+        # 翻转 x_second 的符号位
+        x_second_flat = x_second.reshape(-1, 32)
+        ones = torch.ones_like(x_second_flat[..., 0:1])
+        neg_sign = self.sign_xor(x_second_flat[..., 0:1], ones)
+        neg_x_second_flat = torch.cat([neg_sign, x_second_flat[..., 1:]], dim=-1)
+        neg_x_second = neg_x_second_flat.view(batch_size, self.half_dim, 32)
+
+        # rotate_half(x) = [-x_second, x_first]
+        x_rotated = torch.cat([neg_x_second, x_first], dim=1)  # [batch, head_dim, 32]
+
+        # result = x * cos + rotate_half(x) * sin
         # 展平处理
-        x_even_flat = x_even.reshape(-1, 32)  # [batch*half_dim, 32]
-        x_odd_flat = x_odd.reshape(-1, 32)
-        cos_flat = cos_angle.reshape(-1, 32)
-        sin_flat = sin_angle.reshape(-1, 32)
+        x_flat = x.reshape(-1, 32)  # [batch*head_dim, 32]
+        x_rotated_flat = x_rotated.reshape(-1, 32)
+        cos_flat = cos_full.reshape(-1, 32)
+        sin_flat = sin_full.reshape(-1, 32)
 
         # 乘法
-        cos_x_e = self.mul_cos_even(x_even_flat, cos_flat)  # [batch*half_dim, 32]
-        sin_x_o = self.mul_sin_odd(x_odd_flat, sin_flat)
-        sin_x_e = self.mul_sin_even(x_even_flat, sin_flat)
-        cos_x_o = self.mul_cos_odd(x_odd_flat, cos_flat)
+        x_cos = self.mul_cos_even(x_flat, cos_flat)  # [batch*head_dim, 32]
+        xr_sin = self.mul_sin_odd(x_rotated_flat, sin_flat)
 
-        # 减法: x_even * cos - x_odd * sin
-        # 翻转 sin_x_o 的符号位使用 VecXOR
-        ones = torch.ones_like(sin_x_o[..., 0:1])
-        neg_sign = self.sign_xor(sin_x_o[..., 0:1], ones)
-        neg_sin_x_o = torch.cat([neg_sign, sin_x_o[..., 1:]], dim=-1)
-
-        result_even_flat = self.add_even(cos_x_e, neg_sin_x_o)
-
-        # 加法: x_even * sin + x_odd * cos
-        result_odd_flat = self.add_odd(sin_x_e, cos_x_o)
+        # 加法: x * cos + rotate_half(x) * sin
+        result_flat = self.add_even(x_cos, xr_sin)
 
         # 恢复形状
-        result_even = result_even_flat.view(batch_size, self.half_dim, 32)
-        result_odd = result_odd_flat.view(batch_size, self.half_dim, 32)
-
-        # 交错合并 (向量化)
-        result = torch.zeros(batch_size, self.head_dim, 32, device=device)
-        result[:, 0::2, :] = result_even
-        result[:, 1::2, :] = result_odd
+        result = result_flat.view(batch_size, self.head_dim, 32)
 
         return result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 # ==============================================================================
@@ -363,9 +367,8 @@ class SpikeRoPE_MultiPrecision(nn.Module):
         return result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 # ==============================================================================

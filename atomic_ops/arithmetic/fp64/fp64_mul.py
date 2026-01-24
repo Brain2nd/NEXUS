@@ -22,7 +22,7 @@ from atomic_ops.core.vec_logic_gates import (
     VecAND, VecOR, VecXOR, VecNOT, VecMUX,
     VecORTree, VecANDTree, VecAdder, VecSubtractor
 )
-from atomic_ops.core.logic_gates import RippleCarryAdder
+# 注意：使用 VecAdder 代替旧的 RippleCarryAdder（支持 max_param_shape）
 from .fp64_components import Comparator11Bit
 
 
@@ -31,15 +31,19 @@ from .fp64_components import Comparator11Bit
 # ==============================================================================
 class VecRippleCarryAdder108Bit(nn.Module):
     """108位加法器 - 向量化版本 (LSB first)"""
+    MAX_BITS = 108
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.bits = 108
         nt = neuron_template
-        self.xor1 = VecXOR(neuron_template=nt)
-        self.xor2 = VecXOR(neuron_template=nt)
-        self.and1 = VecAND(neuron_template=nt)
-        self.and2 = VecAND(neuron_template=nt)
-        self.or1 = VecOR(neuron_template=nt)
+        max_shape = (self.MAX_BITS,)
+        max_shape_1 = (1,)
+        self.xor1 = VecXOR(neuron_template=nt, max_param_shape=max_shape)
+        self.xor2 = VecXOR(neuron_template=nt, max_param_shape=max_shape)
+        self.and1 = VecAND(neuron_template=nt, max_param_shape=max_shape)
+        self.and2 = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.or1 = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
         
     def forward(self, A, B, Cin=None):
         """A + B, LSB first"""
@@ -95,13 +99,16 @@ class VecArrayMultiplier54x54(nn.Module):
         neuron_template: 神经元模板
         accumulator_mode: 累加模式 ('sequential' 或 'parallel')
     """
+    MAX_BITS = 108
+
     def __init__(self, neuron_template=None, accumulator_mode='sequential'):
         super().__init__()
         nt = neuron_template
         self.accumulator_mode = accumulator_mode
+        max_shape_54 = (54,)
 
         # 部分积生成: 使用单个VecAND处理所有位
-        self.pp_and = VecAND(neuron_template=nt)
+        self.pp_and = VecAND(neuron_template=nt, max_param_shape=max_shape_54)
 
         # 解耦累加器 - 单个加法器 + 累加策略
         from atomic_ops.core.accumulator import create_partial_product_accumulator
@@ -155,18 +162,23 @@ class VecArrayMultiplier54x54(nn.Module):
 # ==============================================================================
 class VecLeadingZeroDetector108(nn.Module):
     """108位前导零检测器 - 向量化版本
-    
+
     输入: X[107:0] MSB first
     输出: LZC[6:0] 前导零个数 (MSB first)
     """
+    MAX_BITS = 108
+
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
-        self.vec_or_tree = VecORTree(neuron_template=nt)
+        max_shape_108 = (self.MAX_BITS,)
+        max_shape_7 = (7,)
+        max_shape_1 = (1,)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_7)
+        self.vec_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape_108)
         
     def forward(self, X):
         """X: [..., 108] MSB first, returns: [..., 7] LZC MSB first"""
@@ -213,11 +225,13 @@ class VecLeadingZeroDetector108(nn.Module):
 # ==============================================================================
 class VecBarrelShifterLeft108(nn.Module):
     """108位桶形左移位器 - 向量化版本"""
+    MAX_BITS = 108
+
     def __init__(self, neuron_template=None):
         super().__init__()
         self.data_bits = 108
         self.shift_bits = 7
-        self.vec_mux = VecMUX(neuron_template=neuron_template)
+        self.vec_mux = VecMUX(neuron_template=neuron_template, max_param_shape=(self.MAX_BITS,))
             
     def forward(self, X, shift):
         """X: [..., 108], shift: [..., 7] (MSB first)"""
@@ -251,9 +265,11 @@ class VecBarrelShifterLeft108(nn.Module):
 # ==============================================================================
 class VecAdder12Bit(nn.Module):
     """12位加法器 - 向量化版本"""
+    MAX_BITS = 12
+
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.adder = VecAdder(12, neuron_template=neuron_template)
+        self.adder = VecAdder(12, neuron_template=neuron_template, max_param_shape=(self.MAX_BITS,))
         
     def forward(self, A, B, Cin=None):
         return self.adder(A, B, Cin)
@@ -264,9 +280,11 @@ class VecAdder12Bit(nn.Module):
 
 class VecSubtractor12Bit(nn.Module):
     """12位减法器 - 向量化版本"""
+    MAX_BITS = 12
+
     def __init__(self, neuron_template=None):
         super().__init__()
-        self.subtractor = VecSubtractor(12, neuron_template=neuron_template)
+        self.subtractor = VecSubtractor(12, neuron_template=neuron_template, max_param_shape=(self.MAX_BITS,))
         
     def forward(self, A, B, Bin=None):
         return self.subtractor(A, B)
@@ -288,35 +306,45 @@ class SpikeFP64Multiplier(nn.Module):
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         accumulator_mode: 累加模式 ('sequential' 或 'parallel')
     """
+    MAX_BITS = 64
+
     def __init__(self, neuron_template=None, accumulator_mode='sequential'):
         super().__init__()
         nt = neuron_template
+        # 预分配参数形状
+        max_shape_108 = (108,)
+        max_shape_64 = (64,)
+        max_shape_54 = (54,)
+        max_shape_52 = (52,)
+        max_shape_12 = (12,)
+        max_shape_11 = (11,)
+        max_shape_1 = (1,)
 
         # ===== 向量化基础门电路 =====
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_64)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_64)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_64)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_64)
         # VecMUX 统一实例 (动态扩展机制支持不同位宽)
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
 
         # ===== 独立实例的 Tree (不同输入大小需要独立实例) =====
         # 指数相关 (11-bit): e_a_all_one, e_b_all_one, exp_ge_2047
-        self.vec_and_tree_exp_a = VecANDTree(neuron_template=nt)
-        self.vec_and_tree_exp_b = VecANDTree(neuron_template=nt)
-        self.vec_and_tree_exp_overflow = VecANDTree(neuron_template=nt)
+        self.vec_and_tree_exp_a = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.vec_and_tree_exp_b = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.vec_and_tree_exp_overflow = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 指数非零检测 (11-bit): e_a_any_one, e_b_any_one, exp_any_one
-        self.vec_or_tree_exp_a = VecORTree(neuron_template=nt)
-        self.vec_or_tree_exp_b = VecORTree(neuron_template=nt)
-        self.vec_or_tree_exp_final = VecORTree(neuron_template=nt)
+        self.vec_or_tree_exp_a = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.vec_or_tree_exp_b = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.vec_or_tree_exp_final = VecORTree(neuron_template=nt, max_param_shape=max_shape_12)
 
         # 尾数非零检测 (52-bit): m_a_any_one, m_b_any_one
-        self.vec_or_tree_mant_a = VecORTree(neuron_template=nt)
-        self.vec_or_tree_mant_b = VecORTree(neuron_template=nt)
+        self.vec_or_tree_mant_a = VecORTree(neuron_template=nt, max_param_shape=max_shape_52)
+        self.vec_or_tree_mant_b = VecORTree(neuron_template=nt, max_param_shape=max_shape_52)
 
         # sticky位检测 (54-bit)
-        self.vec_or_tree_sticky = VecORTree(neuron_template=nt)
+        self.vec_or_tree_sticky = VecORTree(neuron_template=nt, max_param_shape=max_shape_54)
         
         # ===== 指数运算 =====
         self.exp_adder = VecAdder12Bit(neuron_template=nt)
@@ -334,8 +362,8 @@ class SpikeFP64Multiplier(nn.Module):
         self.norm_shifter = VecBarrelShifterLeft108(neuron_template=nt)
         
         # ===== 舍入 =====
-        self.round_adder = RippleCarryAdder(bits=53, neuron_template=nt)
-        self.exp_round_inc = RippleCarryAdder(bits=11, neuron_template=nt)
+        self.round_adder = VecAdder(bits=53, neuron_template=nt, max_param_shape=(53,))
+        self.exp_round_inc = VecAdder(bits=11, neuron_template=nt, max_param_shape=(11,))
         
     def forward(self, A, B):
         """

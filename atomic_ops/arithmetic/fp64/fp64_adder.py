@@ -22,64 +22,75 @@ from .fp64_components import (
     BarrelShifterRight57WithSticky,
     BarrelShifterLeft57, LeadingZeroDetector57
 )
-from atomic_ops.core.logic_gates import RippleCarryAdder
+# 注意：使用 VecAdder 代替旧的 RippleCarryAdder（支持 max_param_shape）
 
 
 class SpikeFP64Adder(nn.Module):
     """FP64 空间编码加法器 - 100%纯SNN门电路 (向量化版本)
-    
+
     FP64 格式: [S | E10..E0 | M51..M0], bias=1023
     内部使用 57 位尾数精度 (hidden + 52 mant + 4 guard)
-    
+
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
+    MAX_BITS = 64  # FP64 最大位宽
+
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
+        # 预分配参数形状
+        max_shape_64 = (64,)
+        max_shape_57 = (57,)
+        max_shape_52 = (52,)
+        max_shape_11 = (11,)
+        max_shape_5 = (5,)
+        max_shape_4 = (4,)
+        max_shape_3 = (3,)
+        max_shape_1 = (1,)
+
         # ===== 向量化基础门电路 (复用) =====
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_not = VecNOT(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_57)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_57)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_57)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_57)
 
         # ===== VecMUX 统一实例 (动态扩展机制支持不同位宽) =====
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
 
         # ===== 独立实例的 Tree (不同输入大小需要独立实例) =====
         # 指数非零检测 (11-bit): e_a_nonzero, e_b_nonzero
-        self.vec_or_tree_exp_a = VecORTree(neuron_template=nt)
-        self.vec_or_tree_exp_b = VecORTree(neuron_template=nt)
+        self.vec_or_tree_exp_a = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
+        self.vec_or_tree_exp_b = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 大指数差检测 (5-bit)
-        self.vec_or_tree_high_bits = VecORTree(neuron_template=nt)
+        self.vec_or_tree_high_bits = VecORTree(neuron_template=nt, max_param_shape=max_shape_5)
 
         # bit543检测 (3-bit)
-        self.vec_and_tree_bit543 = VecANDTree(neuron_template=nt)
+        self.vec_and_tree_bit543 = VecANDTree(neuron_template=nt, max_param_shape=max_shape_3)
 
         # sticky检测 - 溢出情况 (4-bit)
-        self.vec_or_tree_sticky_overflow = VecORTree(neuron_template=nt)
+        self.vec_or_tree_sticky_overflow = VecORTree(neuron_template=nt, max_param_shape=max_shape_4)
 
         # sticky检测 - 正常情况 (3-bit)
-        self.vec_or_tree_sticky_norm = VecORTree(neuron_template=nt)
+        self.vec_or_tree_sticky_norm = VecORTree(neuron_template=nt, max_param_shape=max_shape_3)
 
         # 最终指数全1检测 (11-bit)
-        self.vec_and_tree_exp_all_one = VecANDTree(neuron_template=nt)
-        
+        self.vec_and_tree_exp_all_one = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
+
         # ===== 比较器 =====
         self.exp_cmp = Comparator11Bit(neuron_template=nt)
         self.mantissa_cmp = Comparator53Bit(neuron_template=nt)
-        
+
         # ===== 指数差 =====
         self.exp_sub_ab = Subtractor11Bit(neuron_template=nt)
         self.exp_sub_ba = Subtractor11Bit(neuron_template=nt)
-        
+
         # ===== 绝对值比较门 =====
-        self.abs_eq_and = VecAND(neuron_template=nt)
-        self.mant_ge_or = VecOR(neuron_template=nt)
-        self.abs_ge_and = VecAND(neuron_template=nt)
-        self.abs_ge_or = VecOR(neuron_template=nt)
+        self.abs_eq_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_ge_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.abs_ge_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.abs_ge_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
         
         # ===== 对齐移位器 =====
         self.align_shifter = BarrelShifterRight57WithSticky(neuron_template=nt)
@@ -96,11 +107,11 @@ class SpikeFP64Adder(nn.Module):
         
         # ===== 溢出/下溢处理 =====
         self.underflow_cmp = Comparator11Bit(neuron_template=nt)
-        self.post_round_exp_inc = RippleCarryAdder(bits=11, neuron_template=nt)
-        self.round_exp_inc = RippleCarryAdder(bits=11, neuron_template=nt)
-        
+        self.post_round_exp_inc = VecAdder(bits=11, neuron_template=nt, max_param_shape=(11,))
+        self.round_exp_inc = VecAdder(bits=11, neuron_template=nt, max_param_shape=(11,))
+
         # ===== 舍入 =====
-        self.round_adder = RippleCarryAdder(bits=53, neuron_template=nt)
+        self.round_adder = VecAdder(bits=53, neuron_template=nt, max_param_shape=(53,))
         
     def forward(self, A, B):
         """

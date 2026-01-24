@@ -3,6 +3,12 @@ Core SNN components - Logic gates, neurons, and spike mode control
 """
 from .spike_mode import SpikeMode
 from .training_mode import TrainingMode
+from .pulse_storage import (
+    PulseTensor,
+    pulse_to_bool,
+    bool_to_pulse,
+    calculate_memory_savings,
+)
 from .accumulator import (
     Accumulator,
     SequentialAccumulator,

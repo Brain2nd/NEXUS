@@ -50,16 +50,21 @@ class SpikeFP64SqrtGuess(nn.Module):
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
+
+        # 预分配参数形状
+        max_shape_52 = (52,)
+        max_shape_11 = (11,)
+        max_shape_1 = (1,)
+
         # 向量化门电路
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
-        
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_52)
+
         # 指数加法器
-        self.exp_adder = VecAdder(11)
+        self.exp_adder = VecAdder(11, neuron_template=nt, max_param_shape=max_shape_11)
         
     def forward(self, x):
         device = x.device
@@ -132,6 +137,12 @@ class SpikeFP64Sqrt(nn.Module):
         self.iterations = iterations
         nt = neuron_template
 
+        # 预分配参数形状
+        max_shape_64 = (64,)
+        max_shape_52 = (52,)
+        max_shape_11 = (11,)
+        max_shape_1 = (1,)
+
         self.guess = SpikeFP64SqrtGuess(neuron_template=nt)
 
         # 迭代所需的运算单元 (已经向量化)
@@ -140,20 +151,20 @@ class SpikeFP64Sqrt(nn.Module):
         self.muls = nn.ModuleList([SpikeFP64Multiplier(neuron_template=nt) for _ in range(iterations)])
 
         # 向量化门电路
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
 
         # 独立实例的 Tree (不同输入大小需要独立实例)
         # 指数全1检测 (11-bit)
-        self.vec_and_tree_exp = VecANDTree(neuron_template=nt)
+        self.vec_and_tree_exp = VecANDTree(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 尾数非零检测 (52-bit)
-        self.vec_or_tree_mant = VecORTree(neuron_template=nt)
+        self.vec_or_tree_mant = VecORTree(neuron_template=nt, max_param_shape=max_shape_52)
 
         # 指数非零检测 (11-bit)
-        self.vec_or_tree_exp = VecORTree(neuron_template=nt)
+        self.vec_or_tree_exp = VecORTree(neuron_template=nt, max_param_shape=max_shape_11)
         
     def forward(self, x):
         device = x.device

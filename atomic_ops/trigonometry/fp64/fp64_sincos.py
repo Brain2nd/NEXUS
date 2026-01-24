@@ -18,6 +18,7 @@ FP64 三角函数 Sin/Cos - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 import struct
 import math
 
@@ -65,13 +66,17 @@ class SpikeFP64Round(nn.Module):
         super().__init__()
         nt = neuron_template
 
+        # 预分配参数形状
+        max_shape_64 = (64,)
+        max_shape_1 = (1,)
+
         # 需要导入 Floor
         from atomic_ops.activation.fp64.fp64_exp import SpikeFP64Floor
 
         self.fp64_adder = SpikeFP64Adder(neuron_template=nt)
         self.fp64_floor = SpikeFP64Floor(neuron_template=nt)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
 
     def forward(self, x):
         """四舍五入
@@ -104,9 +109,8 @@ class SpikeFP64Round(nn.Module):
         return result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 # ==============================================================================
@@ -132,9 +136,13 @@ class SpikeFP64ExtractMod4(nn.Module):
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
+
+        # 预分配参数形状
+        max_shape_1 = (1,)
+
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_1)
 
     def forward(self, x):
         """提取 mod 4
@@ -207,9 +215,8 @@ class SpikeFP64ExtractMod4(nn.Module):
         return result, sign
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 # ==============================================================================
@@ -235,6 +242,10 @@ class SpikeFP64Sin(nn.Module):
         super().__init__()
         nt = neuron_template
 
+        # 预分配参数形状
+        max_shape_64 = (64,)
+        max_shape_1 = (1,)
+
         # 基本运算
         self.mul = SpikeFP64Multiplier(neuron_template=nt)
         self.add = SpikeFP64Adder(neuron_template=nt)
@@ -243,13 +254,13 @@ class SpikeFP64Sin(nn.Module):
         self.extract_mod4 = SpikeFP64ExtractMod4(neuron_template=nt)
 
         # 符号翻转 (XOR)
-        self.sign_xor = VecXOR(neuron_template=nt)
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
 
         # mod4 负数处理
-        self.mod4_xor = VecXOR(neuron_template=nt)
+        self.mod4_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 结果选择
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
 
         # Taylor多项式需要的额外乘法器和加法器
         self.mul2 = SpikeFP64Multiplier(neuron_template=nt)
@@ -412,9 +423,8 @@ class SpikeFP64Sin(nn.Module):
         return result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 class SpikeFP64Cos(nn.Module):
@@ -449,9 +459,8 @@ class SpikeFP64Cos(nn.Module):
         return self.sin(x_plus_pi2)
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 class SpikeFP64SinCos(nn.Module):
@@ -466,6 +475,10 @@ class SpikeFP64SinCos(nn.Module):
         super().__init__()
         nt = neuron_template
 
+        # 预分配参数形状
+        max_shape_64 = (64,)
+        max_shape_1 = (1,)
+
         # 基本运算
         self.mul = SpikeFP64Multiplier(neuron_template=nt)
         self.add = SpikeFP64Adder(neuron_template=nt)
@@ -473,11 +486,11 @@ class SpikeFP64SinCos(nn.Module):
         self.extract_mod4 = SpikeFP64ExtractMod4(neuron_template=nt)
 
         # 符号
-        self.sign_xor = VecXOR(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
 
         # mod4 负数处理
-        self.mod4_xor = VecXOR(neuron_template=nt)
+        self.mod4_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape_1)
 
         # Taylor 多项式的乘法器/加法器 (共享)
         self.mul_r2 = SpikeFP64Multiplier(neuron_template=nt)
@@ -607,6 +620,5 @@ class SpikeFP64SinCos(nn.Module):
         return sin_result, cos_result
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)

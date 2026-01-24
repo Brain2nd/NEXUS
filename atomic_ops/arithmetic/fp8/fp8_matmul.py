@@ -10,6 +10,7 @@ FP8 脉冲域矩阵乘法 - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 
 from atomic_ops.core.accumulator import SequentialAccumulator, ParallelAccumulator
 
@@ -109,9 +110,8 @@ class SpikeFP8MatMul(nn.Module):
             return self.accumulator.reduce(products_fp8, dim=-2)
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 class SpikeFP8MatMulAB(nn.Module):
@@ -183,6 +183,5 @@ class SpikeFP8MatMulAB(nn.Module):
             return self.accumulator.reduce(products_fp8, dim=-3)
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)

@@ -51,19 +51,24 @@ class SimpleIFNode(nn.Module):
         trainable_threshold: 是否允许训练阈值
         threshold_shape: 延迟初始化时的目标形状
             - None: 使用标量阈值 (默认)
-            - 'auto': 动态扩展模式 - 自动扩展以适应不同位宽输入
+            - 'auto': 动态扩展模式 - 自动扩展以适应不同位宽输入 (已废弃)
             - tuple: 指定形状
+        max_param_shape: 预分配最大形状 (推荐)
+            - None: 不预分配，使用旧的懒加载机制 (默认)
+            - tuple: 在 __init__ 时预分配该尺寸的参数，forward 时切片
     """
     def __init__(self,
                  v_threshold: Union[float, torch.Tensor] = 1.0,
                  v_reset: Optional[float] = None,
                  trainable_threshold: bool = False,
-                 threshold_shape: Optional[Union[str, tuple]] = None):
+                 threshold_shape: Optional[Union[str, tuple]] = None,
+                 max_param_shape: Optional[tuple] = None):
         super().__init__()
 
         self.v_reset = v_reset
         self.trainable_threshold = trainable_threshold
         self.threshold_shape = threshold_shape
+        self.max_param_shape = max_param_shape
         self._threshold_initialized = False
 
         # 处理不同的阈值初始化模式
@@ -81,6 +86,10 @@ class SimpleIFNode(nn.Module):
             self.register_buffer('_v_threshold', None)
 
         self.register_buffer('v', None)
+
+        # 如果指定了 max_param_shape，在 __init__ 时预分配参数
+        if max_param_shape is not None:
+            self._preallocate_params(max_param_shape)
 
     @property
     def v_threshold(self) -> Union[float, torch.Tensor]:
@@ -103,6 +112,19 @@ class SimpleIFNode(nn.Module):
             else:
                 self._v_threshold = value.clone()
             self._threshold_initialized = True
+
+    def _preallocate_params(self, shape: tuple):
+        """在 __init__ 时一次性预分配最大尺寸参数
+
+        Args:
+            shape: 要预分配的参数形状 (例如 (32,) 表示32位)
+        """
+        threshold_tensor = torch.full(shape, self._v_threshold_default, dtype=torch.float32)
+        if self.trainable_threshold:
+            self._v_threshold = nn.Parameter(threshold_tensor)
+        else:
+            self.register_buffer('_v_threshold', threshold_tensor)
+        self._threshold_initialized = True
 
     def _maybe_expand_threshold(self, x: torch.Tensor):
         """动态扩展初始化：根据输入形状创建或扩展参数
@@ -158,56 +180,99 @@ class SimpleIFNode(nn.Module):
                         self._v_threshold = new_threshold
 
     def forward(self, x):
-        # 动态扩展初始化（如果配置了 threshold_shape）
-        self._maybe_expand_threshold(x)
+        # 如果使用预分配模式 (max_param_shape)，跳过动态扩展，直接切片
+        if self.max_param_shape is not None:
+            # 预分配模式：参数已在 __init__ 中创建，只需切片
+            input_bits = x.shape[-1] if x.dim() > 0 else 1
+
+            # 切片到实际输入尺寸
+            threshold = self._v_threshold[..., :input_bits] if self._v_threshold is not None else self._v_threshold_default
+            if isinstance(threshold, (int, float)):
+                threshold = torch.tensor(threshold, device=x.device, dtype=x.dtype)
+        else:
+            # 旧的懒加载模式（向后兼容）
+            # 动态扩展初始化（如果配置了 threshold_shape）
+            self._maybe_expand_threshold(x)
+
+            # 获取阈值（标量或张量，支持动态切片）
+            threshold = self.v_threshold
+            if isinstance(threshold, (int, float)):
+                threshold = torch.tensor(threshold, device=x.device, dtype=x.dtype)
+            elif self.threshold_shape == 'auto' and threshold.dim() > 0:
+                # 动态切片：根据输入位宽切片阈值
+                input_bits = x.shape[-1] if x.dim() > 0 else 1
+                if threshold.shape[-1] > input_bits:
+                    threshold = threshold[..., :input_bits]
 
         # 重新初始化 v 如果形状不匹配（支持多次调用不同大小输入）
         if self.v is None or self.v.shape != x.shape:
             self.v = torch.zeros_like(x)
 
-        # 膜电位积累
-        self.v = self.v + x
-
-        # 获取阈值（标量或张量，支持动态切片）
-        threshold = self.v_threshold
-        if isinstance(threshold, (int, float)):
-            threshold = torch.tensor(threshold, device=x.device, dtype=x.dtype)
-        elif self.threshold_shape == 'auto' and threshold.dim() > 0:
-            # 动态切片：根据输入位宽切片阈值
-            input_bits = x.shape[-1] if x.dim() > 0 else 1
-            if threshold.shape[-1] > input_bits:
-                threshold = threshold[..., :input_bits]
+        # 膜电位积累 (就地操作避免内存分配)
+        self.v.add_(x)
 
         # 发放判断（支持广播）
         spike = (self.v >= threshold).float()
 
         # 复位
         if self.v_reset is None:
-            # 软复位: V = V - spike × V_th（支持广播）
-            self.v = self.v - spike * threshold
+            # 软复位: V = V - spike × V_th (就地操作)
+            self.v.sub_(spike * threshold)
         else:
             # 硬复位: V = v_reset (发放时) 或保持 (未发放时)
-            self.v = torch.where(spike > 0,
-                                 torch.full_like(self.v, self.v_reset),
-                                 self.v)
+            reset_val = torch.full_like(self.v, self.v_reset)
+            self.v.copy_(torch.where(spike > 0, reset_val, self.v))
 
         return spike
 
     def reset_state(self):
-        """只重置膜电位，保留参数初始化状态（高效版本）
+        """重置膜电位，释放内存
 
-        用于 SpikeMode.BIT_EXACT 模式下的高频调用。
-        与 reset() 不同，此方法不会重置参数初始化状态。
+        用于 SpikeMode.BIT_EXACT 模式下的调用。
+        释放 self.v 以防止显存累积。
+
+        注意：设置 self.v = None 释放内存，而不是 zero_() 保留张量。
+        虽然每次 forward 需要重新分配，但这是防止显存滚雪球的必要代价。
         """
         self.v = None
 
     def reset(self):
-        """重置神经元状态"""
+        """重置神经元状态 - 释放膜电位内存
+
+        如果使用 max_param_shape 预分配模式，保留参数（只重置膜电位）。
+        如果使用旧的懒加载模式，重置参数初始化状态以支持不同输入形状。
+
+        注意：设置 self.v = None 释放内存，而不是 zero_() 保留张量。
+        这对于防止显存累积至关重要。
+        """
+        # 释放膜电位内存（而不是 zero_() 保留张量）
         self.v = None
+        # 预分配模式：保留参数
+        if self.max_param_shape is not None:
+            return
+        # 旧的懒加载模式：重置参数初始化状态
+        self._threshold_initialized = False
+        if hasattr(self, '_v_threshold') and self._v_threshold is not None:
+            if not isinstance(self._v_threshold, nn.Parameter):
+                self._v_threshold = None
 
     def _reset(self):
-        """内部reset方法 - 由父组件调用"""
+        """内部reset方法 - 由父组件调用
+
+        如果使用 max_param_shape 预分配模式，保留参数（只重置膜电位）。
+
+        注意：设置 self.v = None 释放内存。
+        """
+        # 释放膜电位内存
         self.v = None
+        # 预分配模式：保留参数
+        if self.max_param_shape is not None:
+            return
+        # 旧的懒加载模式：重置参数初始化状态
+        self._threshold_initialized = False
+        if hasattr(self, '_v_threshold') and self._v_threshold is not None:
+            if not isinstance(self._v_threshold, nn.Parameter):
+                self._v_threshold = None
 
     # 兼容接口
     def neuronal_charge(self, x):
@@ -262,8 +327,12 @@ class SimpleLIFNode(nn.Module):
         trainable_threshold: 是否训练阈值
         param_shape: 延迟初始化的参数形状
             - None: 使用标量参数 (默认)
-            - 'auto': 动态扩展模式 - 自动扩展以适应不同位宽输入
+            - 'auto': 动态扩展模式 - 自动扩展以适应不同位宽输入 (已废弃)
             - tuple: 指定形状
+        max_param_shape: 预分配最大形状 (推荐)
+            - None: 不预分配，使用旧的懒加载机制 (默认)
+            - tuple: 在 __init__ 时预分配该尺寸的参数，forward 时切片
+            - 与 param_shape='auto' 配合使用效果最佳
     """
     # 默认泄漏因子：极小泄漏，保持位精确但增加信息熵
     DEFAULT_BETA = 1.0 - 1e-7
@@ -274,7 +343,8 @@ class SimpleLIFNode(nn.Module):
                  v_reset: Optional[float] = None,
                  trainable_beta: bool = False,
                  trainable_threshold: bool = False,
-                 param_shape: Optional[Union[str, tuple]] = None):
+                 param_shape: Optional[Union[str, tuple]] = None,
+                 max_param_shape: Optional[tuple] = None):
         super().__init__()
 
         # 处理默认beta值
@@ -285,6 +355,7 @@ class SimpleLIFNode(nn.Module):
         self.trainable_beta = trainable_beta
         self.trainable_threshold = trainable_threshold
         self.param_shape = param_shape
+        self.max_param_shape = max_param_shape
         self._params_initialized = False
 
         # 存储默认值（用于延迟初始化）
@@ -314,6 +385,10 @@ class SimpleLIFNode(nn.Module):
             self._threshold_initialized = False
 
         self.register_buffer('v', None)
+
+        # 如果指定了 max_param_shape，在 __init__ 时预分配参数
+        if max_param_shape is not None:
+            self._preallocate_params(max_param_shape)
 
     @property
     def beta(self) -> Union[float, torch.Tensor]:
@@ -358,6 +433,33 @@ class SimpleLIFNode(nn.Module):
             else:
                 self._v_threshold = value.clone()
             self._threshold_initialized = True
+
+    def _preallocate_params(self, shape: tuple):
+        """在 __init__ 时一次性预分配最大尺寸参数
+
+        这个方法在 __init__ 中调用（当指定了 max_param_shape 时），
+        实现一次性分配最大尺寸的参数张量，避免后续动态扩展导致的内存问题。
+
+        Args:
+            shape: 要预分配的参数形状 (例如 (32,) 表示32位)
+        """
+        # 预分配 beta
+        beta_tensor = torch.full(shape, self._beta_default, dtype=torch.float32)
+        if self.trainable_beta:
+            self._beta = nn.Parameter(beta_tensor)
+        else:
+            self.register_buffer('_beta', beta_tensor)
+        self._beta_initialized = True
+
+        # 预分配 threshold
+        threshold_tensor = torch.full(shape, self._threshold_default, dtype=torch.float32)
+        if self.trainable_threshold:
+            self._v_threshold = nn.Parameter(threshold_tensor)
+        else:
+            self.register_buffer('_v_threshold', threshold_tensor)
+        self._threshold_initialized = True
+
+        self._params_initialized = True
 
     def _maybe_expand_params(self, x: torch.Tensor):
         """动态扩展初始化：根据输入形状创建或扩展参数
@@ -442,63 +544,92 @@ class SimpleLIFNode(nn.Module):
                         self._v_threshold = new_threshold
 
     def forward(self, x):
-        # 动态扩展初始化（会检测形状变化并重新初始化参数）
-        self._maybe_expand_params(x)
+        # 如果使用预分配模式 (max_param_shape)，跳过动态扩展，直接切片
+        if self.max_param_shape is not None:
+            # 预分配模式：参数已在 __init__ 中创建，只需切片
+            input_bits = x.shape[-1] if x.dim() > 0 else 1
+
+            # 切片到实际输入尺寸
+            beta = self._beta[..., :input_bits] if self._beta is not None else self._beta_default
+            threshold = self._v_threshold[..., :input_bits] if self._v_threshold is not None else self._threshold_default
+
+            if isinstance(beta, (int, float)):
+                beta = torch.tensor(beta, device=x.device, dtype=x.dtype)
+            if isinstance(threshold, (int, float)):
+                threshold = torch.tensor(threshold, device=x.device, dtype=x.dtype)
+        else:
+            # 旧的懒加载模式（向后兼容）
+            # 动态扩展初始化（会检测形状变化并重新初始化参数）
+            self._maybe_expand_params(x)
+
+            # 获取参数（支持广播和动态切片）
+            beta = self.beta
+            threshold = self.v_threshold
+            input_bits = x.shape[-1] if x.dim() > 0 else 1
+
+            if isinstance(beta, (int, float)):
+                beta = torch.tensor(beta, device=x.device, dtype=x.dtype)
+            elif self.param_shape == 'auto' and beta.dim() > 0:
+                # 动态切片
+                if beta.shape[-1] > input_bits:
+                    beta = beta[..., :input_bits]
+
+            if isinstance(threshold, (int, float)):
+                threshold = torch.tensor(threshold, device=x.device, dtype=x.dtype)
+            elif self.param_shape == 'auto' and threshold.dim() > 0:
+                # 动态切片
+                if threshold.shape[-1] > input_bits:
+                    threshold = threshold[..., :input_bits]
 
         # 重新初始化 v 如果形状不匹配（支持多次调用不同大小输入）
         if self.v is None or self.v.shape != x.shape:
             self.v = torch.zeros_like(x)
 
-        # 获取参数（支持广播和动态切片）
-        beta = self.beta
-        threshold = self.v_threshold
-        input_bits = x.shape[-1] if x.dim() > 0 else 1
-
-        if isinstance(beta, (int, float)):
-            beta = torch.tensor(beta, device=x.device, dtype=x.dtype)
-        elif self.param_shape == 'auto' and beta.dim() > 0:
-            # 动态切片
-            if beta.shape[-1] > input_bits:
-                beta = beta[..., :input_bits]
-
-        if isinstance(threshold, (int, float)):
-            threshold = torch.tensor(threshold, device=x.device, dtype=x.dtype)
-        elif self.param_shape == 'auto' and threshold.dim() > 0:
-            # 动态切片
-            if threshold.shape[-1] > input_bits:
-                threshold = threshold[..., :input_bits]
-
-        # LIF 动力学: V = beta * V + I（支持广播）
-        self.v = beta * self.v + x
+        # LIF 动力学: V = beta * V + I
+        # 使用就地操作避免内存分配（预分配模式的关键优化）
+        self.v.mul_(beta).add_(x)
 
         # 发放判断
         spike = (self.v >= threshold).float()
 
         # 复位
         if self.v_reset is None:
-            # 软复位: V = V - spike × V_th
-            self.v = self.v - spike * threshold
+            # 软复位: V = V - spike × V_th (就地操作)
+            self.v.sub_(spike * threshold)
         else:
             # 硬复位: V = v_reset (发放时) 或保持 (未发放时)
-            self.v = torch.where(spike > 0,
-                                 torch.full_like(self.v, self.v_reset),
-                                 self.v)
+            # 注意：torch.where 无法完全就地操作，但可以使用 copy_ 减少分配
+            reset_val = torch.full_like(self.v, self.v_reset)
+            self.v.copy_(torch.where(spike > 0, reset_val, self.v))
 
         return spike
 
     def reset_state(self):
-        """只重置膜电位，保留参数初始化状态（高效版本）
+        """重置膜电位，释放内存
 
-        用于 SpikeMode.BIT_EXACT 模式下的高频调用。
-        与 reset() 不同，此方法不会重置参数初始化状态，
-        避免在每次 forward 调用时重新初始化张量参数。
+        用于 SpikeMode.BIT_EXACT 模式下的调用。
+        释放 self.v 以防止显存累积。
+
+        注意：设置 self.v = None 释放内存，而不是 zero_() 保留张量。
+        虽然每次 forward 需要重新分配，但这是防止显存滚雪球的必要代价。
         """
         self.v = None
 
     def reset(self):
-        """重置神经元状态"""
+        """重置神经元状态 - 释放膜电位内存
+
+        如果使用 max_param_shape 预分配模式，保留参数（只重置膜电位）。
+        如果使用旧的懒加载模式，重置参数初始化状态以支持不同输入形状。
+
+        注意：设置 self.v = None 释放内存，而不是 zero_() 保留张量。
+        这对于防止显存累积至关重要。
+        """
+        # 释放膜电位内存（而不是 zero_() 保留张量）
         self.v = None
-        # 重置参数初始化状态，以支持不同输入形状
+        # 预分配模式：保留参数
+        if self.max_param_shape is not None:
+            return
+        # 旧的懒加载模式：重置参数初始化状态
         self._params_initialized = False
         self._beta_initialized = False
         self._threshold_initialized = False
@@ -509,8 +640,18 @@ class SimpleLIFNode(nn.Module):
             self._v_threshold = None
 
     def _reset(self):
-        """内部reset方法 - 由父组件调用"""
+        """内部reset方法 - 由父组件调用
+
+        如果使用 max_param_shape 预分配模式，保留参数（只重置膜电位）。
+
+        注意：设置 self.v = None 释放内存。
+        """
+        # 释放膜电位内存
         self.v = None
+        # 预分配模式：保留参数
+        if self.max_param_shape is not None:
+            return
+        # 旧的懒加载模式：重置参数初始化状态
         self._params_initialized = False
         self._beta_initialized = False
         self._threshold_initialized = False

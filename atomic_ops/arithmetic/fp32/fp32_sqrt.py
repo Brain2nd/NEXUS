@@ -10,8 +10,7 @@ FP32 平方根函数 - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
-from atomic_ops.core.logic_gates import (ANDGate, ORGate, XORGate, NOTGate, MUXGate,
-                          FullAdder, RippleCarryAdder)
+from atomic_ops.core.logic_gates import (FullAdder)
 
 
 class Subtractor50Bit(nn.Module):
@@ -21,9 +20,9 @@ class Subtractor50Bit(nn.Module):
         self.bits = 50
         nt = neuron_template
         # 单实例 (动态扩展机制支持不同位宽)
-        self.not_gate = NOTGate(neuron_template=nt)
-        self.adder = FullAdder(neuron_template=nt)
-        self.borrow_not = NOTGate(neuron_template=nt)
+        self.not_gate = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.adder = FullAdder(neuron_template=nt, max_param_shape=(1,))
+        self.borrow_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
 
     def forward(self, A, B):
         """A - B, LSB first. Returns (result, borrow)"""
@@ -66,44 +65,44 @@ class SpikeFP32Sqrt(nn.Module):
         self.subtractor = Subtractor50Bit(neuron_template=nt)
 
         # 余数选择MUX (50位) - 单实例
-        self.mux_r = MUXGate(neuron_template=nt)
+        self.mux_r = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # Q bit NOT (用于判断 R >= T)
-        self.q_not = NOTGate(neuron_template=nt)
+        self.q_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
 
         # 指数处理
-        self.exp_add = RippleCarryAdder(bits=9, neuron_template=nt)
-        self.exp_mux = MUXGate(neuron_template=nt)  # 单实例
+        self.exp_add = VecAdder(bits=9, neuron_template=nt, max_param_shape=(9,))
+        self.exp_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))  # 单实例
 
         # 舍入
-        self.rne_or = ORGate(neuron_template=nt)
-        self.rne_and = ANDGate(neuron_template=nt)
-        self.round_adder = RippleCarryAdder(bits=23, neuron_template=nt)
+        self.rne_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.rne_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.round_adder = VecAdder(bits=23, neuron_template=nt, max_param_shape=(23,))
 
         # 特殊值检测 - 单实例
-        self.exp_all_one_and = ANDGate(neuron_template=nt)
-        self.exp_zero_or = ORGate(neuron_template=nt)
-        self.exp_zero_not = NOTGate(neuron_template=nt)
-        self.exp_odd_not = NOTGate(neuron_template=nt)  # 用于判断 (e-127) 奇偶
-        self.mant_zero_or = ORGate(neuron_template=nt)  # 单实例
-        self.mant_zero_not = NOTGate(neuron_template=nt)
+        self.exp_all_one_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.exp_zero_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.exp_zero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.exp_odd_not = VecNOT(neuron_template=nt, max_param_shape=(1,))  # 用于判断 (e-127) 奇偶
+        self.mant_zero_or = VecOR(neuron_template=nt, max_param_shape=(1,))  # 单实例
+        self.mant_zero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
 
-        self.is_zero_and = ANDGate(neuron_template=nt)
-        self.is_inf_and = ANDGate(neuron_template=nt)
-        self.is_nan_and = ANDGate(neuron_template=nt)
-        self.is_neg_and = ANDGate(neuron_template=nt)
-        self.not_is_zero = NOTGate(neuron_template=nt)
+        self.is_zero_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.is_inf_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.is_nan_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.is_neg_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.not_is_zero = VecNOT(neuron_template=nt, max_param_shape=(1,))
 
         # sticky检测 - 单实例
-        self.sticky_or = ORGate(neuron_template=nt)
+        self.sticky_or = VecOR(neuron_template=nt, max_param_shape=(1,))
 
         # 输出选择MUX - 单实例
-        self.nan_mux = MUXGate(neuron_template=nt)
-        self.inf_mux = MUXGate(neuron_template=nt)
-        self.zero_mux = MUXGate(neuron_template=nt)
-        self.radicand_mux = MUXGate(neuron_template=nt)
+        self.nan_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.inf_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.zero_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.radicand_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
-        self.result_nan_or = ORGate(neuron_template=nt)
+        self.result_nan_or = VecOR(neuron_template=nt, max_param_shape=(1,))
         
     def forward(self, x):
         device = x.device

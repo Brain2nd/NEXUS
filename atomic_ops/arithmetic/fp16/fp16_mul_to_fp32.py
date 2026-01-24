@@ -14,8 +14,8 @@ FP32: [S | E7..E0 | M22..M0], bias=127
 """
 import torch
 import torch.nn as nn
-from atomic_ops.core.logic_gates import (ANDGate, ORGate, XORGate, NOTGate, MUXGate,
-                          RippleCarryAdder)
+from atomic_ops.core.reset_utils import reset_children
+from atomic_ops.core.logic_gates import (MUXGate)
 from atomic_ops.arithmetic.fp32.fp32_mul import SpikeFP32Multiplier
 
 
@@ -46,48 +46,48 @@ class FP16ToFP32Converter(nn.Module):
         nt = neuron_template
 
         # 检测 FP16 E=0 - 单实例
-        self.e_or = ORGate(neuron_template=nt)
-        self.e_is_zero_not = NOTGate(neuron_template=nt)
+        self.e_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.e_is_zero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
 
         # 检测 E=31 (Inf/NaN) - 单实例
-        self.e_all_ones_and = ANDGate(neuron_template=nt)
+        self.e_all_ones_and = VecAND(neuron_template=nt, max_param_shape=(1,))
 
         # 检测 M≠0 - 单实例
-        self.m_or = ORGate(neuron_template=nt)
+        self.m_or = VecOR(neuron_template=nt, max_param_shape=(1,))
 
         # 检测 subnormal (E=0 AND M≠0)
-        self.is_subnorm_and = ANDGate(neuron_template=nt)
+        self.is_subnorm_and = VecAND(neuron_template=nt, max_param_shape=(1,))
 
         # 检测 zero (E=0 AND M=0)
-        self.not_m_nonzero = NOTGate(neuron_template=nt)
-        self.is_zero_and = ANDGate(neuron_template=nt)
+        self.not_m_nonzero = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.is_zero_and = VecAND(neuron_template=nt, max_param_shape=(1,))
 
         # 检测 Inf (E=31 AND M=0)
-        self.is_inf_and = ANDGate(neuron_template=nt)
+        self.is_inf_and = VecAND(neuron_template=nt, max_param_shape=(1,))
 
         # 检测 NaN (E=31 AND M≠0)
-        self.is_nan_and = ANDGate(neuron_template=nt)
+        self.is_nan_and = VecAND(neuron_template=nt, max_param_shape=(1,))
 
         # 8位加法器: FP16_exp (5位扩展) + 112
-        self.exp_adder = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.exp_adder = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
 
         # 最终选择 MUX - 单实例
-        self.final_exp_mux = MUXGate(neuron_template=nt)
-        self.final_mant_mux = MUXGate(neuron_template=nt)
+        self.final_exp_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.final_mant_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # 零/Inf/NaN 处理 MUX - 单实例
-        self.zero_mux = MUXGate(neuron_template=nt)
-        self.inf_mux = MUXGate(neuron_template=nt)
-        self.nan_mux = MUXGate(neuron_template=nt)
+        self.zero_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.inf_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.nan_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # ===== Subnormal 处理门电路 =====
         # 前导1检测 (优先级编码器): 找到 m[9..0] 中第一个1的位置
         # is_first[k] = m[k] AND NOT(m[9]) AND NOT(m[8]) AND ... AND NOT(m[k+1])
-        self.subnorm_not = NOTGate(neuron_template=nt)
-        self.subnorm_and = ANDGate(neuron_template=nt)
+        self.subnorm_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.subnorm_and = VecAND(neuron_template=nt, max_param_shape=(1,))
         # 用于选择 subnormal 指数和尾数
-        self.subnorm_exp_mux = MUXGate(neuron_template=nt)
-        self.subnorm_mant_mux = MUXGate(neuron_template=nt)
+        self.subnorm_exp_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.subnorm_mant_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
     def forward(self, fp16_pulse):
         """
@@ -356,9 +356,8 @@ class FP16ToFP32Converter(nn.Module):
         return fp32_pulse
 
     def reset(self):
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
 
 class SpikeFP16MulToFP32(nn.Module):
@@ -403,12 +402,6 @@ class SpikeFP16MulToFP32(nn.Module):
 
         return result
 
-    def reset_all(self):
-        """递归reset所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
-
     def reset(self):
-        """向后兼容"""
-        self.reset_all()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)

@@ -17,6 +17,7 @@ FP8 多精度乘法器 - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 
 from .fp8_mul import SpikeFP8Multiplier
 from .fp8_mul_to_fp32 import SpikeFP8MulToFP32
@@ -95,12 +96,6 @@ class SpikeFP8Multiplier_MultiPrecision(nn.Module):
             # 直接 FP8 × FP8 → FP8
             return self.mul(A, B)
 
-    def reset_all(self):
-        """递归reset所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
-
     def reset(self):
-        """向后兼容"""
-        self.reset_all()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)

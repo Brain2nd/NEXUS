@@ -77,6 +77,7 @@ import torch
 import torch.nn as nn
 
 from atomic_ops.core.training_mode import TrainingMode
+from atomic_ops.core.reset_utils import reset_children
 from atomic_ops.core.accumulator import SequentialAccumulator, ParallelAccumulator
 from atomic_ops.arithmetic.fp32.fp32_mul import SpikeFP32Multiplier
 from atomic_ops.arithmetic.fp32.fp32_adder import SpikeFP32Adder
@@ -143,17 +144,49 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
 
         # 脉冲权重
         if TrainingMode.is_ste(self.training_mode):
-            # STE 训练模式：权重为 Parameter (脉冲格式)
+            # STE 训练模式：权重为 Parameter (脉冲格式，float32)
             # 初始化为零脉冲，需要通过 set_weight_from_float 或 set_weight_pulse 设置
-            self.weight_pulse = nn.Parameter(
+            self._weight_pulse_float = nn.Parameter(
                 torch.zeros(out_features, in_features, 32),
                 requires_grad=True
             )
             # 脉冲梯度缓存 (用于纯脉冲优化器)
             self.register_buffer('grad_pulse', None)
+            self.register_buffer('_weight_pulse_bool', None)  # 未使用，保持一致性
         else:
-            # 推理模式：权重为 buffer
-            self.register_buffer('weight_pulse', None)
+            # 推理模式：权重为 bool buffer (4x 内存节省)
+            self.register_buffer('_weight_pulse_bool', None)
+            self._weight_pulse_float = None  # 推理模式不需要 float Parameter
+
+    @property
+    def weight_pulse(self):
+        """获取脉冲权重 (按需转换为 float)
+
+        推理模式：从 bool buffer 转换为 float
+        训练模式：直接返回 float Parameter
+        """
+        if TrainingMode.is_ste(self.training_mode):
+            return self._weight_pulse_float
+        else:
+            if self._weight_pulse_bool is not None:
+                return self._weight_pulse_bool.float()
+            return None
+
+    @weight_pulse.setter
+    def weight_pulse(self, value):
+        """设置脉冲权重"""
+        if TrainingMode.is_ste(self.training_mode):
+            if isinstance(value, nn.Parameter):
+                self._weight_pulse_float = value
+            else:
+                with torch.no_grad():
+                    self._weight_pulse_float.copy_(value)
+        else:
+            # 推理模式：存储为 bool (4x 内存节省)
+            if value is not None:
+                self._weight_pulse_bool = (value > 0.5).bool()
+            else:
+                self._weight_pulse_bool = None
 
     def set_weight_from_float(self, weight_float):
         """将 float 权重转换为 FP32 脉冲
@@ -169,12 +202,12 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
         weight_pulse = float32_to_pulse(weight_float, device=weight_float.device)
 
         if TrainingMode.is_ste(self.training_mode):
-            # 训练模式：更新 Parameter
+            # 训练模式：更新 Parameter (保持 float)
             with torch.no_grad():
-                self.weight_pulse.copy_(weight_pulse)
+                self._weight_pulse_float.copy_(weight_pulse)
         else:
-            # 推理模式：直接设置 buffer
-            self.weight_pulse = weight_pulse
+            # 推理模式：存储为 bool (4x 内存节省)
+            self._weight_pulse_bool = (weight_pulse > 0.5).bool()
 
     def set_weight_pulse(self, weight_pulse):
         """直接设置脉冲权重
@@ -186,9 +219,10 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
 
         if TrainingMode.is_ste(self.training_mode):
             with torch.no_grad():
-                self.weight_pulse.copy_(weight_pulse)
+                self._weight_pulse_float.copy_(weight_pulse)
         else:
-            self.weight_pulse = weight_pulse
+            # 推理模式：存储为 bool (4x 内存节省)
+            self._weight_pulse_bool = (weight_pulse > 0.5).bool()
 
     def get_weight_float(self):
         """将脉冲权重解码为 float (边界操作，用于检查/导出)"""
@@ -254,15 +288,9 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
         # 转换回 FP32 输出
         return self.output_converter(acc)
 
-    def reset_all(self):
-        """递归reset所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
-
     def reset(self):
-        """向后兼容"""
-        self.reset_all()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 
     def train(self, mode=True):
         """切换训练模式"""

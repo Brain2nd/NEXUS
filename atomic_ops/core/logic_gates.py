@@ -95,7 +95,8 @@ from .spike_mode import SpikeMode
 
 
 def _create_neuron(template, threshold, v_reset=None, param_shape='auto',
-                   trainable_threshold=True, trainable_beta=True, beta=None):
+                   trainable_threshold=True, trainable_beta=True, beta=None,
+                   max_param_shape=None):
     """从模板创建指定阈值的神经元
 
     Args:
@@ -106,6 +107,9 @@ def _create_neuron(template, threshold, v_reset=None, param_shape='auto',
         trainable_threshold: 阈值是否可训练（默认True）
         trainable_beta: 泄漏率是否可训练（默认True）
         beta: 泄漏因子 (None=DEFAULT_BETA)
+        max_param_shape: 预分配最大形状 (推荐)
+            - None: 不预分配，使用旧的懒加载机制
+            - tuple: 在 __init__ 时预分配该尺寸的参数，forward 时切片
 
     Returns:
         配置好的神经元实例
@@ -118,7 +122,8 @@ def _create_neuron(template, threshold, v_reset=None, param_shape='auto',
             v_reset=v_reset,
             trainable_beta=trainable_beta,
             trainable_threshold=trainable_threshold,
-            param_shape=param_shape
+            param_shape=param_shape,
+            max_param_shape=max_param_shape
         )
     else:
         node = deepcopy(template)
@@ -132,6 +137,12 @@ def _create_neuron(template, threshold, v_reset=None, param_shape='auto',
         # SimpleIFNode 兼容性（使用 threshold_shape）
         if hasattr(node, 'threshold_shape') and param_shape is not None:
             node.threshold_shape = param_shape
+        # 传播 max_param_shape 用于预分配
+        if max_param_shape is not None and hasattr(node, 'max_param_shape'):
+            node.max_param_shape = max_param_shape
+            # 如果有 _preallocate_params 方法，调用它预分配参数
+            if hasattr(node, '_preallocate_params'):
+                node._preallocate_params(max_param_shape)
         return node
 
 
@@ -174,16 +185,19 @@ class ANDGate(BaseLogicGate):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=1.5)
+        self.node = _create_neuron(neuron_template, threshold=1.5, max_param_shape=max_param_shape)
         self._instance_mode = mode
 
     def forward(self, x_a, x_b):
+        result = self.node(x_a + x_b)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        return self.node(x_a + x_b)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本）"""
@@ -219,16 +233,19 @@ class ORGate(BaseLogicGate):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=0.5)
+        self.node = _create_neuron(neuron_template, threshold=0.5, max_param_shape=max_param_shape)
         self._instance_mode = mode
 
     def forward(self, x_a, x_b):
+        result = self.node(x_a + x_b)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        return self.node(x_a + x_b)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本）"""
@@ -256,22 +273,20 @@ class XORGate(BaseLogicGate):
     Args:
         neuron_template: 神经元模板
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
         # 内部实例化 NOT 门 - 使用两个独立实例避免状态累积
-        self.not_a_gate = NOTGate(neuron_template, mode=mode)
-        self.not_b_gate = NOTGate(neuron_template, mode=mode)
+        self.not_a_gate = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.not_b_gate = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
         # 组合逻辑
-        self.and1 = _create_neuron(neuron_template, threshold=1.5)  # A AND NOT_B
-        self.and2 = _create_neuron(neuron_template, threshold=1.5)  # NOT_A AND B
-        self.or_out = _create_neuron(neuron_template, threshold=0.5)  # 输出 OR
+        self.and1 = _create_neuron(neuron_template, threshold=1.5, max_param_shape=max_param_shape)  # A AND NOT_B
+        self.and2 = _create_neuron(neuron_template, threshold=1.5, max_param_shape=max_param_shape)  # NOT_A AND B
+        self.or_out = _create_neuron(neuron_template, threshold=0.5, max_param_shape=max_param_shape)  # 输出 OR
 
     def forward(self, x_a, x_b):
-        # 内部神经元的 reset 由模式控制
-        if SpikeMode.should_reset(self._instance_mode):
-            self._reset_internal_nodes()
         # 使用 SNN 门生成反相信号 - 每个输入使用独立的NOT门
         not_a = self.not_a_gate(x_a)
         not_b = self.not_b_gate(x_b)
@@ -281,6 +296,9 @@ class XORGate(BaseLogicGate):
         term2 = self.and2(not_a + x_b)
         out_spike = self.or_out(term1 + term2)
 
+        # BIT_EXACT 模式：forward 结束后清理内部神经元的膜电位
+        if SpikeMode.should_reset(self._instance_mode):
+            self._reset_internal_nodes()
         return out_spike
 
     def _reset_internal_nodes(self):
@@ -330,18 +348,21 @@ class NOTGate(BaseLogicGate):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         # 阈值设为 1.0
-        self.node = _create_neuron(neuron_template, threshold=1.0)
+        self.node = _create_neuron(neuron_template, threshold=1.0, max_param_shape=max_param_shape)
         self._instance_mode = mode
 
     def forward(self, x):
+        # 物理模拟: Bias(1.5) + Inhibitory Input(-x)
+        result = self.node(1.5 - x)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        # 物理模拟: Bias(1.5) + Inhibitory Input(-x)
-        return self.node(1.5 - x)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本）"""
@@ -369,15 +390,16 @@ class XNORGate(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.not_a = NOTGate(neuron_template, mode=mode)
-        self.not_b = NOTGate(neuron_template, mode=mode)
-        self.and1 = ANDGate(neuron_template, mode=mode)
-        self.and2 = ANDGate(neuron_template, mode=mode)
-        self.or1 = ORGate(neuron_template, mode=mode)
+        self.not_a = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.not_b = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and1 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and2 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or1 = ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b):
         ab = self.and1(a, b)
@@ -413,13 +435,14 @@ class AND4Gate(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.and1 = ANDGate(neuron_template, mode=mode)
-        self.and2 = ANDGate(neuron_template, mode=mode)
-        self.and3 = ANDGate(neuron_template, mode=mode)
+        self.and1 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and2 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and3 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b, c, d):
         ab = self.and1(a, b)
@@ -450,16 +473,19 @@ class SpikeDetector(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=0.5)
+        self.node = _create_neuron(neuron_template, threshold=0.5, max_param_shape=max_param_shape)
         self._instance_mode = mode
 
     def forward(self, x):
+        result = self.node(x)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        return self.node(x)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本）"""
@@ -487,14 +513,15 @@ class MUXGate(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.not_s = NOTGate(neuron_template, mode=mode)
-        self.and1 = ANDGate(neuron_template, mode=mode)
-        self.and2 = ANDGate(neuron_template, mode=mode)
-        self.or1 = ORGate(neuron_template, mode=mode)
+        self.not_s = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and1 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and2 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or1 = ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, s, a, b):
         ns = self.not_s(s)
@@ -526,12 +553,13 @@ class OR3Gate(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.or1 = ORGate(neuron_template, mode=mode)
-        self.or2 = ORGate(neuron_template, mode=mode)
+        self.or1 = ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or2 = ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b, c):
         ab = self.or1(a, b)
@@ -577,15 +605,16 @@ class HalfAdder(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
 
     Returns:
         (S, C): 和位与进位位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.xor1 = XORGate(neuron_template, mode=mode)
-        self.and1 = ANDGate(neuron_template, mode=mode)
+        self.xor1 = XORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and1 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b):
         s = self.xor1(a, b)   # S = A ⊕ B
@@ -632,18 +661,19 @@ class FullAdder(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
 
     Returns:
         (S, Cout): 和位与进位输出
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.xor1 = XORGate(neuron_template, mode=mode)
-        self.xor2 = XORGate(neuron_template, mode=mode)
-        self.and1 = ANDGate(neuron_template, mode=mode)
-        self.and2 = ANDGate(neuron_template, mode=mode)
-        self.or1 = ORGate(neuron_template, mode=mode)
+        self.xor1 = XORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.xor2 = XORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and1 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and2 = ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or1 = ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b, cin):
         s1 = self.xor1(a, b)       # A ⊕ B
@@ -698,17 +728,20 @@ class RippleCarryAdder(nn.Module):
         bits: 加法器位宽
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
 
     门电路计数: bits × 7 = 7N IF 神经元
 
     Returns:
         (Sum, Cout): N位和 与 最终进位
     """
-    def __init__(self, bits=4, neuron_template=None, mode=None):
+    def __init__(self, bits=4, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.bits = bits
         self._instance_mode = mode
-        self.adders = nn.ModuleList([FullAdder(neuron_template, mode=mode) for _ in range(bits)])
+        # 每个 FullAdder 处理单比特，所以用 (1,) 作为 max_param_shape
+        fa_max_shape = (1,) if max_param_shape is not None else None
+        self.adders = nn.ModuleList([FullAdder(neuron_template, mode=mode, max_param_shape=fa_max_shape) for _ in range(bits)])
         
     def forward(self, A, B, Cin=None):
         """
@@ -757,14 +790,15 @@ class ORTree(nn.Module):
         n_inputs: 输入数量
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, n_inputs, neuron_template=None, mode=None):
+    def __init__(self, n_inputs, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.n_inputs = n_inputs
         self._instance_mode = mode
         # 构建二叉OR树
         n_gates = n_inputs - 1 if n_inputs > 1 else 0
-        self.or_gates = nn.ModuleList([ORGate(neuron_template, mode=mode) for _ in range(n_gates)])
+        self.or_gates = nn.ModuleList([ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(n_gates)])
         
     def forward(self, inputs):
         """
@@ -817,13 +851,14 @@ class ANDTree(nn.Module):
         n_inputs: 输入数量
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, n_inputs, neuron_template=None, mode=None):
+    def __init__(self, n_inputs, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.n_inputs = n_inputs
         self._instance_mode = mode
         n_gates = n_inputs - 1 if n_inputs > 1 else 0
-        self.and_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode) for _ in range(n_gates)])
+        self.and_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(n_gates)])
         
     def forward(self, inputs):
         if isinstance(inputs, list):
@@ -878,17 +913,18 @@ class FirstSpikeDetector(nn.Module):
         max_steps: 最大时间步
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, max_steps, neuron_template=None, mode=None):
+    def __init__(self, max_steps, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.max_steps = max_steps
         self._instance_mode = mode
         # OR门用于累积"之前是否有脉冲"
-        self.or_gates = nn.ModuleList([ORGate(neuron_template, mode=mode) for _ in range(max_steps - 1)])
+        self.or_gates = nn.ModuleList([ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(max_steps - 1)])
         # AND门用于输出首脉冲
-        self.and_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode) for _ in range(max_steps)])
+        self.and_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(max_steps)])
         # NOT门
-        self.not_gates = nn.ModuleList([NOTGate(neuron_template, mode=mode) for _ in range(max_steps)])
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(max_steps)])
         
     def forward(self, spike_train):
         """
@@ -959,8 +995,9 @@ class OneHotToExponent(nn.Module):
         e_bits: 指数位数
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, max_steps, n_integer_bits, bias=7, e_bits=4, neuron_template=None, mode=None):
+    def __init__(self, max_steps, n_integer_bits, bias=7, e_bits=4, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.max_steps = max_steps
         self.e_bits = e_bits
@@ -989,9 +1026,9 @@ class OneHotToExponent(nn.Module):
                     positions_with_bit.append(k)
 
             if len(positions_with_bit) > 0:
-                self.and_gates.append(nn.ModuleList([ANDGate(neuron_template, mode=mode) for _ in positions_with_bit]))
+                self.and_gates.append(nn.ModuleList([ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in positions_with_bit]))
                 if len(positions_with_bit) > 1:
-                    self.or_trees.append(ORTree(len(positions_with_bit), neuron_template, mode=mode))
+                    self.or_trees.append(ORTree(len(positions_with_bit), neuron_template, mode=mode, max_param_shape=max_param_shape))
                 else:
                     self.or_trees.append(None)
             else:
@@ -1083,8 +1120,9 @@ class NormalMantissaExtractor(nn.Module):
         m_bits: 尾数位数
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, max_steps, m_bits=3, neuron_template=None, mode=None):
+    def __init__(self, max_steps, m_bits=3, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.max_steps = max_steps
         self.m_bits = m_bits
@@ -1101,9 +1139,9 @@ class NormalMantissaExtractor(nn.Module):
                               if k + 1 + m_idx < max_steps]
 
             if len(valid_positions) > 0:
-                self.and_gates.append(nn.ModuleList([ANDGate(neuron_template, mode=mode) for _ in valid_positions]))
+                self.and_gates.append(nn.ModuleList([ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in valid_positions]))
                 if len(valid_positions) > 1:
-                    self.or_trees.append(ORTree(len(valid_positions), neuron_template, mode=mode))
+                    self.or_trees.append(ORTree(len(valid_positions), neuron_template, mode=mode, max_param_shape=max_param_shape))
                 else:
                     self.or_trees.append(None)
             else:
@@ -1194,13 +1232,14 @@ class PriorityEncoder8(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.or_chain = nn.ModuleList([ORGate(neuron_template, mode=mode) for _ in range(7)])
-        self.not_gates = nn.ModuleList([NOTGate(neuron_template, mode=mode) for _ in range(8)])
-        self.and_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode) for _ in range(8)])
+        self.or_chain = nn.ModuleList([ORGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(7)])
+        self.not_gates = nn.ModuleList([NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
+        self.and_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
         
     def forward(self, P):
         p_bits = [P[..., i:i+1] for i in range(8)]
@@ -1252,13 +1291,14 @@ class ShiftAmountEncoder8to3(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.or_tree_s0 = ORTree(4, neuron_template, mode=mode)
-        self.or_tree_s1 = ORTree(4, neuron_template, mode=mode)
-        self.or_tree_s2 = ORTree(4, neuron_template, mode=mode)
+        self.or_tree_s0 = ORTree(4, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_s1 = ORTree(4, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_s2 = ORTree(4, neuron_template, mode=mode, max_param_shape=max_param_shape)
         
     def forward(self, V):
         v = [V[..., i:i+1] for i in range(8)]
@@ -1297,13 +1337,14 @@ class BarrelShifter8(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.mux_s4 = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(8)])
-        self.mux_s2 = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(8)])
-        self.mux_s1 = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(8)])
+        self.mux_s4 = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
+        self.mux_s2 = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
+        self.mux_s1 = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
         
     def forward(self, P, S):
         zeros = torch.zeros_like(P[..., 0:1])
@@ -1363,17 +1404,18 @@ class ExponentAdjuster(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.or_tree_e0 = ORTree(8, neuron_template, mode=mode)
-        self.or_tree_e1 = ORTree(8, neuron_template, mode=mode)
-        self.or_tree_e2 = ORTree(8, neuron_template, mode=mode)
-        self.or_tree_e3 = ORTree(8, neuron_template, mode=mode)
-        self.or_tree_e4 = ORTree(8, neuron_template, mode=mode)
-        self.nor_all_valid = NOTGate(neuron_template, mode=mode)
-        self.or_tree_valid = ORTree(8, neuron_template, mode=mode)
+        self.or_tree_e0 = ORTree(8, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_e1 = ORTree(8, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_e2 = ORTree(8, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_e3 = ORTree(8, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_e4 = ORTree(8, neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.nor_all_valid = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree_valid = ORTree(8, neuron_template, mode=mode, max_param_shape=max_param_shape)
         
     def forward(self, V):
         v = [V[..., i:i+1] for i in range(8)]
@@ -1437,14 +1479,15 @@ class NewNormalizationUnit(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.priority_encoder = PriorityEncoder8(neuron_template, mode=mode)
-        self.shift_encoder = ShiftAmountEncoder8to3(neuron_template, mode=mode)
-        self.barrel_shifter = BarrelShifter8(neuron_template, mode=mode)
-        self.exponent_adjuster = ExponentAdjuster(neuron_template, mode=mode)
+        self.priority_encoder = PriorityEncoder8(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.shift_encoder = ShiftAmountEncoder8to3(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.barrel_shifter = BarrelShifter8(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.exponent_adjuster = ExponentAdjuster(neuron_template, mode=mode, max_param_shape=max_param_shape)
         
     def forward(self, P):
         # P is Little Endian [P0...P7]
@@ -1515,22 +1558,23 @@ class TemporalExponentGenerator(nn.Module):
         bits: 计数器位数
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, start_value=15, bits=4, neuron_template=None, mode=None):
+    def __init__(self, start_value=15, bits=4, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.bits = bits
         self.start_value = start_value
         self._instance_mode = mode
 
         # 4-bit 减法器 (加 -1)
-        self.adder = RippleCarryAdder(bits=bits, neuron_template=neuron_template, mode=mode)
+        self.adder = RippleCarryAdder(bits=bits, neuron_template=neuron_template, mode=mode, max_param_shape=max_param_shape)
 
         # 状态寄存器 (4位)
         self.register_buffer('state', None)
 
         # 辅助门
-        self.mux_update = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(bits)])
-        self.not_gate = NOTGate(neuron_template, mode=mode)
+        self.mux_update = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(bits)])
+        self.not_gate = NOTGate(neuron_template, mode=mode, max_param_shape=max_param_shape)
         
     def forward(self, has_fired, time_step_pulse):
         batch_size = has_fired.shape[0]
@@ -1624,29 +1668,30 @@ class ArrayMultiplier4x4_Strict(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.pp_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode) for _ in range(16)])
+        self.pp_gates = nn.ModuleList([ANDGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(16)])
 
         # Row 1: 1 HA, 3 FA
-        self.row1_ha = HalfAdder(neuron_template, mode=mode)
-        self.row1_fa1 = FullAdder(neuron_template, mode=mode)
-        self.row1_fa2 = FullAdder(neuron_template, mode=mode)
-        self.row1_fa3 = FullAdder(neuron_template, mode=mode)
+        self.row1_ha = HalfAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row1_fa1 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row1_fa2 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row1_fa3 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
         # Row 2: 1 HA, 3 FA
-        self.row2_ha = HalfAdder(neuron_template, mode=mode)
-        self.row2_fa1 = FullAdder(neuron_template, mode=mode)
-        self.row2_fa2 = FullAdder(neuron_template, mode=mode)
-        self.row2_fa3 = FullAdder(neuron_template, mode=mode)
+        self.row2_ha = HalfAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row2_fa1 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row2_fa2 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row2_fa3 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
         # Row 3: 1 HA, 3 FA
-        self.row3_ha = HalfAdder(neuron_template, mode=mode)
-        self.row3_fa1 = FullAdder(neuron_template, mode=mode)
-        self.row3_fa2 = FullAdder(neuron_template, mode=mode)
-        self.row3_fa3 = FullAdder(neuron_template, mode=mode)
+        self.row3_ha = HalfAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row3_fa1 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row3_fa2 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.row3_fa3 = FullAdder(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, A, B):
         # Generate Partial Products
@@ -1736,13 +1781,14 @@ class Denormalizer(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (1,) 表示单比特
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.mux_s4 = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(8)])
-        self.mux_s2 = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(8)])
-        self.mux_s1 = nn.ModuleList([MUXGate(neuron_template, mode=mode) for _ in range(8)])
+        self.mux_s4 = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
+        self.mux_s2 = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
+        self.mux_s1 = nn.ModuleList([MUXGate(neuron_template, mode=mode, max_param_shape=max_param_shape) for _ in range(8)])
         
     def forward(self, P, S):
         # P: Little Endian

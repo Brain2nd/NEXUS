@@ -25,17 +25,14 @@ FP32:     [S | E7..E0 | M22..M0], bias=127
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 # 使用向量化基础门以保持与 FP16/FP32 组件的一致性
 from atomic_ops.core.vec_logic_gates import (
-    VecAND as ANDGate,
-    VecOR as ORGate,
-    VecXOR as XORGate,
-    VecNOT as NOTGate,
-    VecMUX as MUXGate,
+    VecAND, VecOR, VecXOR, VecNOT, VecMUX,
     VecHalfAdder as HalfAdder,
     VecFullAdder as FullAdder,
-    VecAdder as RippleCarryAdder,
-    VecORTree as ORTree
+    VecORTree as ORTree,
+    VecAdder
 )
 # 保留专用组件
 from atomic_ops.core.logic_gates import ArrayMultiplier4x4_Strict
@@ -56,42 +53,42 @@ class SpikeFP8MulToFP32(nn.Module):
         nt = neuron_template
         
         # 符号
-        self.sign_xor = XORGate(neuron_template=nt)
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
         
         # 指数检测 (E=0 检测) - 单实例
-        self.e_a_or = ORGate(neuron_template=nt)
-        self.e_b_or = ORGate(neuron_template=nt)
-        self.e_a_nonzero_or = ORGate(neuron_template=nt)
-        self.e_b_nonzero_or = ORGate(neuron_template=nt)
+        self.e_a_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.e_b_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.e_a_nonzero_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.e_b_nonzero_or = VecOR(neuron_template=nt, max_param_shape=(1,))
         
         # M≠0 检测 (纯 SNN OR 门链)
-        self.m_a_or_01 = ORGate(neuron_template=nt)
-        self.m_a_or_all = ORGate(neuron_template=nt)
-        self.m_b_or_01 = ORGate(neuron_template=nt)
-        self.m_b_or_all = ORGate(neuron_template=nt)
+        self.m_a_or_01 = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.m_a_or_all = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.m_b_or_01 = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.m_b_or_all = VecOR(neuron_template=nt, max_param_shape=(1,))
         
         # 隐藏位 OR (替换 clamp)
-        self.hidden_a_or = ORGate(neuron_template=nt)
-        self.hidden_b_or = ORGate(neuron_template=nt)
+        self.hidden_a_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.hidden_b_or = VecOR(neuron_template=nt, max_param_shape=(1,))
         
         # 零检测 OR (替换 clamp)
-        self.is_zero_or = ORGate(neuron_template=nt)
+        self.is_zero_or = VecOR(neuron_template=nt, max_param_shape=(1,))
         
         # 4x4 尾数乘法器（输出8位）
-        self.mant_mul = ArrayMultiplier4x4_Strict(neuron_template=nt)
+        self.mant_mul = ArrayMultiplier4x4_Strict(neuron_template=nt, max_param_shape=(1,))
         
         # 8位指数加法 - 每次使用独立实例（避免复用）
         # 用于 subnormal 路径的 E+120 计算
-        self.exp_add_normal_a = RippleCarryAdder(bits=8, neuron_template=nt)
-        self.exp_add_normal_b = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.exp_add_normal_a = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
+        self.exp_add_normal_b = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
         # 用于 subnormal 路径的 E_eff 求和
-        self.exp_sum_subnorm = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.exp_sum_subnorm = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
         # 用于主计算路径
-        self.exp_add_ab = RippleCarryAdder(bits=8, neuron_template=nt)
-        self.exp_add_bias = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.exp_add_ab = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
+        self.exp_add_bias = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
 
         # 指数调整（归一化时+1）
-        self.exp_norm_inc = RippleCarryAdder(bits=8, neuron_template=nt)
+        self.exp_norm_inc = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
         
         # 纯 SNN 指数减法器 (替换 Python 算术)
         self.exp_adj_sub = SubtractorNBit(bits=8, neuron_template=nt)
@@ -100,68 +97,68 @@ class SpikeFP8MulToFP32(nn.Module):
         # adj 编码: adj_a ∈ {0, 1, 2} 对应 lead_at_2, lead_at_1, lead_at_0
         # adj_b 同理，total = adj_a + adj_b ∈ {0, 1, 2, 3, 4}
         # 需要用半加器/全加器来计算 adj_a + adj_b
-        self.adj_ha0 = HalfAdder(neuron_template=nt)  # 低位加法
-        self.adj_ha1 = HalfAdder(neuron_template=nt)  # 高位加法
-        self.adj_or = ORGate(neuron_template=nt)      # 进位处理
+        self.adj_ha0 = HalfAdder(neuron_template=nt, max_param_shape=(1,))  # 低位加法
+        self.adj_ha1 = HalfAdder(neuron_template=nt, max_param_shape=(1,))  # 高位加法
+        self.adj_or = VecOR(neuron_template=nt, max_param_shape=(1,))      # 进位处理
         
         # 零检测 - 单实例
-        self.zero_mux_e = MUXGate(neuron_template=nt)
-        self.zero_mux_m = MUXGate(neuron_template=nt)
+        self.zero_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.zero_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 纯SNN NOT门 (替换 ones - x) =====
-        self.not_e_a_nonzero = NOTGate(neuron_template=nt)
-        self.not_e_b_nonzero = NOTGate(neuron_template=nt)
-        self.not_m2_a = NOTGate(neuron_template=nt)
-        self.not_m1_a = NOTGate(neuron_template=nt)
-        self.not_m2_b = NOTGate(neuron_template=nt)
-        self.not_m1_b = NOTGate(neuron_template=nt)
-        self.not_is_a_subnormal = NOTGate(neuron_template=nt)
-        self.not_is_b_subnormal = NOTGate(neuron_template=nt)
-        self.not_m_a_or = NOTGate(neuron_template=nt)
-        self.not_m_b_or = NOTGate(neuron_template=nt)
-        self.not_needs_norm = NOTGate(neuron_template=nt)
+        self.not_e_a_nonzero = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_e_b_nonzero = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_m2_a = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_m1_a = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_m2_b = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_m1_b = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_is_a_subnormal = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_is_b_subnormal = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_m_a_or = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_m_b_or = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_needs_norm = VecNOT(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 纯SNN XOR门 (替换 a+b-2*a*b) =====
-        self.adj_xor = XORGate(neuron_template=nt)
+        self.adj_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
         
         # ===== 纯SNN AND门 (替换 a*b) =====
-        self.and_a_subnormal = ANDGate(neuron_template=nt)  # not_e_a_nonzero AND m_a_or
-        self.and_b_subnormal = ANDGate(neuron_template=nt)  # not_e_b_nonzero AND m_b_or
-        self.and_a_true_zero = ANDGate(neuron_template=nt)  # not_e_a_nonzero AND not_m_a_or
-        self.and_b_true_zero = ANDGate(neuron_template=nt)  # not_e_b_nonzero AND not_m_b_or
-        self.and_adj_a_bit0 = ANDGate(neuron_template=nt)   # is_a_subnormal AND a_lead_at_1
-        self.and_adj_a_bit1 = ANDGate(neuron_template=nt)   # is_a_subnormal AND a_lead_at_0
-        self.and_adj_b_bit0 = ANDGate(neuron_template=nt)   # is_b_subnormal AND b_lead_at_1
-        self.and_adj_b_bit1 = ANDGate(neuron_template=nt)   # is_b_subnormal AND b_lead_at_0
+        self.and_a_subnormal = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_e_a_nonzero AND m_a_or
+        self.and_b_subnormal = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_e_b_nonzero AND m_b_or
+        self.and_a_true_zero = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_e_a_nonzero AND not_m_a_or
+        self.and_b_true_zero = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_e_b_nonzero AND not_m_b_or
+        self.and_adj_a_bit0 = VecAND(neuron_template=nt, max_param_shape=(1,))   # is_a_subnormal AND a_lead_at_1
+        self.and_adj_a_bit1 = VecAND(neuron_template=nt, max_param_shape=(1,))   # is_a_subnormal AND a_lead_at_0
+        self.and_adj_b_bit0 = VecAND(neuron_template=nt, max_param_shape=(1,))   # is_b_subnormal AND b_lead_at_1
+        self.and_adj_b_bit1 = VecAND(neuron_template=nt, max_param_shape=(1,))   # is_b_subnormal AND b_lead_at_0
         
         # ===== 纯SNN MUX门 (替换 sel*a + not_sel*b) ===== - 单实例
-        self.mux_eff_m_a = MUXGate(neuron_template=nt)  # 3位尾数
-        self.mux_eff_m_b = MUXGate(neuron_template=nt)
-        self.mux_e_eff_a = MUXGate(neuron_template=nt)
-        self.mux_e_eff_b = MUXGate(neuron_template=nt)
-        self.mux_final_exp = MUXGate(neuron_template=nt)
-        self.mux_final_mant = MUXGate(neuron_template=nt)
+        self.mux_eff_m_a = VecMUX(neuron_template=nt, max_param_shape=(1,))  # 3位尾数
+        self.mux_eff_m_b = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_e_eff_a = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_e_eff_b = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_final_exp = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_final_mant = VecMUX(neuron_template=nt, max_param_shape=(1,))
         
         # A 端前导位检测门电路
-        self.and_a_lead_1 = ANDGate(neuron_template=nt)    # not_m2_a AND m1_a
-        self.and_a_lead_0_1 = ANDGate(neuron_template=nt)  # not_m2_a AND not_m1_a
-        self.and_a_lead_0_2 = ANDGate(neuron_template=nt)  # (not_m2_a AND not_m1_a) AND m0_a
+        self.and_a_lead_1 = VecAND(neuron_template=nt, max_param_shape=(1,))    # not_m2_a AND m1_a
+        self.and_a_lead_0_1 = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_m2_a AND not_m1_a
+        self.and_a_lead_0_2 = VecAND(neuron_template=nt, max_param_shape=(1,))  # (not_m2_a AND not_m1_a) AND m0_a
         
         # B 端前导位检测门电路
-        self.and_b_lead_1 = ANDGate(neuron_template=nt)    # not_m2_b AND m1_b
-        self.and_b_lead_0_1 = ANDGate(neuron_template=nt)  # not_m2_b AND not_m1_b
-        self.and_b_lead_0_2 = ANDGate(neuron_template=nt)  # (not_m2_b AND not_m1_b) AND m0_b
+        self.and_b_lead_1 = VecAND(neuron_template=nt, max_param_shape=(1,))    # not_m2_b AND m1_b
+        self.and_b_lead_0_1 = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_m2_b AND not_m1_b
+        self.and_b_lead_0_2 = VecAND(neuron_template=nt, max_param_shape=(1,))  # (not_m2_b AND not_m1_b) AND m0_b
         
         # A 端 subnormal 尾数/指数 MUX - 单实例
-        self.mux_norm_m_a = MUXGate(neuron_template=nt)
-        self.mux_e_sub_a = MUXGate(neuron_template=nt)
+        self.mux_norm_m_a = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_e_sub_a = VecMUX(neuron_template=nt, max_param_shape=(1,))
 
         # B 端 subnormal 尾数/指数 MUX - 单实例
-        self.mux_norm_m_b = MUXGate(neuron_template=nt)
-        self.mux_e_sub_b = MUXGate(neuron_template=nt)
+        self.mux_norm_m_b = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_e_sub_b = VecMUX(neuron_template=nt, max_param_shape=(1,))
         
         # 进位计算 AND 门
-        self.and_carry1b = ANDGate(neuron_template=nt)  # temp1 AND carry0
+        self.and_carry1b = VecAND(neuron_template=nt, max_param_shape=(1,))  # temp1 AND carry0
         
     def forward(self, A, B):
         """
@@ -481,13 +478,7 @@ class SpikeFP8MulToFP32(nn.Module):
         
         return fp32_pulse
     
-    def reset_all(self):
-        """递归reset所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
-
     def reset(self):
-        """向后兼容"""
-        self.reset_all()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
 

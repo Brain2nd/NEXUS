@@ -53,17 +53,20 @@ class VecAND(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=1.5)
+        self.node = _create_neuron(neuron_template, threshold=1.5,
+                                   max_param_shape=max_param_shape)
         self._instance_mode = mode  # None = 跟随全局/上下文
 
     def forward(self, a, b):
-        # 根据模式决定是否 reset
+        result = self.node(a + b)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        return self.node(a + b)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本，用于 BIT_EXACT 模式）"""
@@ -91,16 +94,20 @@ class VecOR(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=0.5)
+        self.node = _create_neuron(neuron_template, threshold=0.5,
+                                   max_param_shape=max_param_shape)
         self._instance_mode = mode
 
     def forward(self, a, b):
+        result = self.node(a + b)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        return self.node(a + b)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本，用于 BIT_EXACT 模式）"""
@@ -136,17 +143,21 @@ class VecNOT(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
-        self.node = _create_neuron(neuron_template, threshold=1.0)
+        self.node = _create_neuron(neuron_template, threshold=1.0,
+                                   max_param_shape=max_param_shape)
         self._instance_mode = mode
 
     def forward(self, x):
+        # 物理模拟: Bias(1.5) + Inhibitory(-x)
+        result = self.node(1.5 - x)
+        # BIT_EXACT 模式：forward 结束后清理膜电位，避免显存累积
         if SpikeMode.should_reset(self._instance_mode):
             self.reset_state()
-        # 物理模拟: Bias(1.5) + Inhibitory(-x)
-        return self.node(1.5 - x)
+        return result
 
     def reset_state(self):
         """只重置膜电位（高效版本，用于 BIT_EXACT 模式）"""
@@ -174,22 +185,23 @@ class VecXOR(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
         # 使用两个独立NOT门实例避免状态累积
-        self.not_a_gate = VecNOT(neuron_template, mode=mode)
-        self.not_b_gate = VecNOT(neuron_template, mode=mode)
+        self.not_a_gate = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.not_b_gate = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)
         # XOR = (A AND NOT_B) OR (NOT_A AND B)
-        self.and1 = _create_neuron(neuron_template, threshold=1.5)  # A AND NOT_B
-        self.and2 = _create_neuron(neuron_template, threshold=1.5)  # NOT_A AND B
-        self.or_out = _create_neuron(neuron_template, threshold=0.5)  # 输出 OR
+        self.and1 = _create_neuron(neuron_template, threshold=1.5,
+                                   max_param_shape=max_param_shape)  # A AND NOT_B
+        self.and2 = _create_neuron(neuron_template, threshold=1.5,
+                                   max_param_shape=max_param_shape)  # NOT_A AND B
+        self.or_out = _create_neuron(neuron_template, threshold=0.5,
+                                     max_param_shape=max_param_shape)  # 输出 OR
 
     def forward(self, a, b):
-        # 内部神经元的 reset 由模式控制
-        if SpikeMode.should_reset(self._instance_mode):
-            self._reset_internal_nodes()
         # 内部生成反相信号 - 每个输入使用独立的NOT门
         not_a = self.not_a_gate(a)
         not_b = self.not_b_gate(b)
@@ -197,7 +209,12 @@ class VecXOR(nn.Module):
         # XOR逻辑
         term1 = self.and1(a + not_b)  # A AND NOT_B
         term2 = self.and2(not_a + b)  # NOT_A AND B
-        return self.or_out(term1 + term2)  # OR
+        result = self.or_out(term1 + term2)  # OR
+
+        # BIT_EXACT 模式：forward 结束后清理内部神经元的膜电位
+        if SpikeMode.should_reset(self._instance_mode):
+            self._reset_internal_nodes()
+        return result
 
     def _reset_internal_nodes(self):
         """重置内部神经元节点（不包括已经有模式控制的子门）"""
@@ -236,15 +253,16 @@ class VecMUX(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
         # 子组件继承模式
-        self.not_s = VecNOT(neuron_template, mode=mode)
-        self.and1 = VecAND(neuron_template, mode=mode)  # s AND a
-        self.and2 = VecAND(neuron_template, mode=mode)  # NOT(s) AND b
-        self.or_gate = VecOR(neuron_template, mode=mode)
+        self.not_s = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and1 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # s AND a
+        self.and2 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # NOT(s) AND b
+        self.or_gate = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, sel, a, b):
         # 子组件已经有模式检查，无需额外处理
@@ -285,12 +303,13 @@ class VecORTree(nn.Module):
         max_layers: 最大层数 (保留用于接口兼容，实际使用单实例)
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, max_layers=10, neuron_template=None, mode=None):
+    def __init__(self, max_layers=10, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
         # 单实例 (动态扩展机制支持不同位宽)
-        self.or_gate = VecOR(neuron_template, mode=mode)
+        self.or_gate = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, x):
         """
@@ -334,12 +353,13 @@ class VecANDTree(nn.Module):
         max_layers: 最大层数 (保留用于接口兼容，实际使用单实例)
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, max_layers=10, neuron_template=None, mode=None):
+    def __init__(self, max_layers=10, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
         # 单实例 (动态扩展机制支持不同位宽)
-        self.and_gate = VecAND(neuron_template, mode=mode)
+        self.and_gate = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, x):
         """
@@ -387,12 +407,13 @@ class VecHalfAdder(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.xor_gate = VecXOR(neuron_template, mode=mode)
-        self.and_gate = VecAND(neuron_template, mode=mode)
+        self.xor_gate = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and_gate = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b):
         s = self.xor_gate(a, b)
@@ -423,15 +444,16 @@ class VecFullAdder(nn.Module):
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, neuron_template=None, mode=None):
+    def __init__(self, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self._instance_mode = mode
-        self.xor1 = VecXOR(neuron_template, mode=mode)
-        self.xor2 = VecXOR(neuron_template, mode=mode)
-        self.and1 = VecAND(neuron_template, mode=mode)
-        self.and2 = VecAND(neuron_template, mode=mode)
-        self.or1 = VecOR(neuron_template, mode=mode)
+        self.xor1 = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.xor2 = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and1 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.and2 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or1 = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)
 
     def forward(self, a, b, cin):
         p = self.xor1(a, b)         # P = A XOR B
@@ -478,18 +500,19 @@ class VecAdder(nn.Module):
         bits: 加法器位宽
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, bits, neuron_template=None, mode=None):
+    def __init__(self, bits, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.bits = bits
         self._instance_mode = mode
 
-        self.xor1 = VecXOR(neuron_template, mode=mode)  # 计算 P
-        self.xor2 = VecXOR(neuron_template, mode=mode)  # 计算 S
-        self.and1 = VecAND(neuron_template, mode=mode)  # 计算 G
+        self.xor1 = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)  # 计算 P
+        self.xor2 = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)  # 计算 S
+        self.and1 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # 计算 G
         # 进位链：单实例 (动态扩展机制支持复用)
-        self.and2 = VecAND(neuron_template, mode=mode)  # P AND carry
-        self.or1 = VecOR(neuron_template, mode=mode)    # G OR (P AND carry)
+        self.and2 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # P AND carry
+        self.or1 = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)    # G OR (P AND carry)
 
     def forward(self, A, B, Cin=None):
         """
@@ -554,20 +577,21 @@ class VecSubtractor(nn.Module):
         bits: 减法器位宽
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, bits, neuron_template=None, mode=None):
+    def __init__(self, bits, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.bits = bits
         self._instance_mode = mode
 
-        self.not_b = VecNOT(neuron_template, mode=mode)
-        self.not_borrow = VecNOT(neuron_template, mode=mode)  # 用于计算最终借位
-        self.xor1 = VecXOR(neuron_template, mode=mode)   # A XOR NOT(B)
-        self.xor2 = VecXOR(neuron_template, mode=mode)   # P XOR carry
-        self.and1 = VecAND(neuron_template, mode=mode)   # A AND NOT(B) (generate)
+        self.not_b = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.not_borrow = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)  # 用于计算最终借位
+        self.xor1 = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)   # A XOR NOT(B)
+        self.xor2 = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)   # P XOR carry
+        self.and1 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)   # A AND NOT(B) (generate)
         # 进位链：单实例 (动态扩展机制支持复用)
-        self.and2 = VecAND(neuron_template, mode=mode)  # P AND carry
-        self.or1 = VecOR(neuron_template, mode=mode)    # G OR (P AND carry)
+        self.and2 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # P AND carry
+        self.or1 = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)    # G OR (P AND carry)
 
     def forward(self, A, B):
         """
@@ -644,21 +668,22 @@ class VecComparator(nn.Module):
         bits: 比较器位宽
         neuron_template: 神经元模板，None 使用默认 IF 神经元
         mode: SpikeMode 模式覆盖，None 表示跟随全局/上下文
+        max_param_shape: 预分配最大参数形状，例如 (32,) 表示32位
     """
-    def __init__(self, bits, neuron_template=None, mode=None):
+    def __init__(self, bits, neuron_template=None, mode=None, max_param_shape=None):
         super().__init__()
         self.bits = bits
         self._instance_mode = mode
 
-        self.xor_eq = VecXOR(neuron_template, mode=mode)      # 检测位相等
-        self.not_b = VecNOT(neuron_template, mode=mode)       # NOT(B)
-        self.and_gt = VecAND(neuron_template, mode=mode)      # A AND NOT(B) - A位为1且B位为0
-        self.and_tree = VecANDTree(neuron_template=neuron_template, mode=mode)
-        self.or_tree = VecORTree(neuron_template=neuron_template, mode=mode)
+        self.xor_eq = VecXOR(neuron_template, mode=mode, max_param_shape=max_param_shape)      # 检测位相等
+        self.not_b = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)       # NOT(B)
+        self.and_gt = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)      # A AND NOT(B) - A位为1且B位为0
+        self.and_tree = VecANDTree(neuron_template=neuron_template, mode=mode, max_param_shape=max_param_shape)
+        self.or_tree = VecORTree(neuron_template=neuron_template, mode=mode, max_param_shape=max_param_shape)
 
         # 用于逐位比较的门
-        self.and_prefix = VecAND(neuron_template, mode=mode)  # 前缀相等 AND 当前位大于
-        self.or_result = VecOR(neuron_template, mode=mode)    # 累积结果
+        self.and_prefix = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # 前缀相等 AND 当前位大于
+        self.or_result = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)    # 累积结果
 
     def forward(self, A, B):
         """

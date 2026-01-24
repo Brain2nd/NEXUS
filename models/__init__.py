@@ -16,16 +16,26 @@ Usage:
     input_ids = torch.randint(0, 1000, (1, 8))
     model.reset()
     logits = model(input_ids)  # [1, 8, 1000, 32] FP32 pulse
+
+Note:
+    All SNN model implementations are in models/reference/modeling_qwen3.py.
+    This is the authoritative source - SNN-ized from the HuggingFace Qwen3 source.
 """
 
-from .qwen3_config import SpikeQwen3Config
-from .qwen3_mlp import SpikeQwen3MLP
-from .qwen3_attention import SpikeQwen3Attention
-from .qwen3_decoder_layer import SpikeQwen3DecoderLayer
-from .qwen3_model import SpikeQwen3Model, SpikeQwen3ForCausalLM
+# Import from the authoritative SNN implementation
+from .reference.modeling_qwen3 import (
+    SpikeQwen3Config,
+    SpikeQwen3RMSNorm,
+    SpikeQwen3MLP,
+    SpikeQwen3Attention,
+    SpikeQwen3DecoderLayer,
+    SpikeQwen3Model,
+    SpikeQwen3ForCausalLM,
+)
 
 __all__ = [
     'SpikeQwen3Config',
+    'SpikeQwen3RMSNorm',
     'SpikeQwen3MLP',
     'SpikeQwen3Attention',
     'SpikeQwen3DecoderLayer',

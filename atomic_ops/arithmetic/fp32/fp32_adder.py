@@ -12,11 +12,12 @@ FP32 格式: [S | E7..E0 | M22..M0], bias=127
 """
 import torch
 import torch.nn as nn
+from atomic_ops.core.reset_utils import reset_children
 from atomic_ops.core.vec_logic_gates import (
     VecAND, VecOR, VecXOR, VecNOT, VecMUX,
     VecORTree, VecANDTree, VecAdder, VecSubtractor
 )
-from atomic_ops.core.logic_gates import RippleCarryAdder
+# 注意：不再使用旧的 RippleCarryAdder，改用 VecAdder（支持 max_param_shape）
 from .fp32_components import (
     Comparator8Bit, Comparator24Bit, Subtractor8Bit,
     RippleCarryAdder28Bit, Subtractor28Bit,
@@ -27,25 +28,29 @@ from .fp32_components import (
 
 class SpikeFP32Adder(nn.Module):
     """FP32 空间编码加法器 - 100%纯SNN门电路 (向量化版本)
-    
+
     FP32 格式: [S | E7..E0 | M22..M0], bias=127
     内部使用 28 位尾数精度 (hidden + 23 mant + 4 guard)
-    
+
     Args:
         neuron_template: 神经元模板，None 使用默认 IF 神经元
     """
+    # FP32 最大位宽 (用于神经元参数预分配)
+    MAX_BITS = 32
+
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
-        
-        # ===== 向量化基础门电路 - 单实例 (动态扩展机制支持不同位宽) =====
-        self.vec_and = VecAND(neuron_template=nt)
-        self.vec_or = VecOR(neuron_template=nt)
-        self.vec_xor = VecXOR(neuron_template=nt)
-        self.vec_not = VecNOT(neuron_template=nt)
-        self.vec_mux = VecMUX(neuron_template=nt)
-        self.vec_or_tree = VecORTree(neuron_template=nt)
-        self.vec_and_tree = VecANDTree(neuron_template=nt)
+        max_shape = (self.MAX_BITS,)
+
+        # ===== 向量化基础门电路 - 单实例 (预分配最大尺寸参数) =====
+        self.vec_and = VecAND(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_or = VecOR(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_xor = VecXOR(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_not = VecNOT(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_or_tree = VecORTree(neuron_template=nt, max_param_shape=max_shape)
+        self.vec_and_tree = VecANDTree(neuron_template=nt, max_param_shape=max_shape)
         
         # ===== 比较器 =====
         self.exp_cmp = Comparator8Bit(neuron_template=nt)
@@ -56,10 +61,10 @@ class SpikeFP32Adder(nn.Module):
         self.exp_sub_ba = Subtractor8Bit(neuron_template=nt)
         
         # ===== 绝对值比较门 =====
-        self.abs_eq_and = VecAND(neuron_template=nt)
-        self.mant_ge_or = VecOR(neuron_template=nt)
-        self.abs_ge_and = VecAND(neuron_template=nt)
-        self.abs_ge_or = VecOR(neuron_template=nt)
+        self.abs_eq_and = VecAND(neuron_template=nt, max_param_shape=max_shape)
+        self.mant_ge_or = VecOR(neuron_template=nt, max_param_shape=max_shape)
+        self.abs_ge_and = VecAND(neuron_template=nt, max_param_shape=max_shape)
+        self.abs_ge_or = VecOR(neuron_template=nt, max_param_shape=max_shape)
         
         # ===== 对齐移位器 =====
         self.align_shifter = BarrelShifterRight28WithSticky(neuron_template=nt)
@@ -76,11 +81,12 @@ class SpikeFP32Adder(nn.Module):
         
         # ===== 溢出/下溢处理 =====
         self.underflow_cmp = Comparator8Bit(neuron_template=nt)
-        self.post_round_exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
-        self.round_exp_inc = RippleCarryAdder(bits=8, neuron_template=nt)
-        
+        # 使用 VecAdder 代替旧的 RippleCarryAdder（支持 max_param_shape）
+        self.post_round_exp_inc = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
+        self.round_exp_inc = VecAdder(bits=8, neuron_template=nt, max_param_shape=(8,))
+
         # ===== 舍入 =====
-        self.round_adder = RippleCarryAdder(bits=24, neuron_template=nt)
+        self.round_adder = VecAdder(bits=24, neuron_template=nt, max_param_shape=(24,))
         
     def forward(self, A, B):
         """
@@ -350,12 +356,6 @@ class SpikeFP32Adder(nn.Module):
         
         return result
     
-    def reset_all(self):
-        """递归reset所有子模块"""
-        for module in self.modules():
-            if module is not self and hasattr(module, 'reset'):
-                module.reset()
-
     def reset(self):
-        """向后兼容"""
-        self.reset_all()
+        """递归reset所有子模块（处理容器类型）"""
+        reset_children(self)
