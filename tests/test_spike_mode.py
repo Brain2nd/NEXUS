@@ -18,6 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from atomic_ops import SpikeMode, ANDGate, VecAND
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_global_mode():
     """测试全局模式设置和获取"""
@@ -97,13 +100,14 @@ def test_should_reset():
 
 def test_bit_exact_mode():
     """测试 BIT_EXACT 模式下门电路正确性"""
+    print(f"Device: {device}")
     SpikeMode.set_global_mode(SpikeMode.BIT_EXACT)
 
-    gate = ANDGate()
+    gate = ANDGate().to(device)
 
     # 多次调用应该得到一致结果
-    a = torch.tensor([1.0])
-    b = torch.tensor([1.0])
+    a = torch.tensor([1.0], device=device)
+    b = torch.tensor([1.0], device=device)
 
     result1 = gate(a, b)
     result2 = gate(a, b)
@@ -114,8 +118,8 @@ def test_bit_exact_mode():
     assert result3.item() == 1.0
 
     # 不同输入也应正确
-    a = torch.tensor([0.0])
-    b = torch.tensor([1.0])
+    a = torch.tensor([0.0], device=device)
+    b = torch.tensor([1.0], device=device)
     result = gate(a, b)
     assert result.item() == 0.0
 
@@ -127,13 +131,13 @@ def test_instance_mode_override():
     SpikeMode.set_global_mode(SpikeMode.BIT_EXACT)
 
     # 创建一个 TEMPORAL 模式的门
-    gate_temporal = ANDGate(mode=SpikeMode.TEMPORAL)
+    gate_temporal = ANDGate(mode=SpikeMode.TEMPORAL).to(device)
 
     # 创建一个 BIT_EXACT 模式的门
-    gate_exact = ANDGate(mode=SpikeMode.BIT_EXACT)
+    gate_exact = ANDGate(mode=SpikeMode.BIT_EXACT).to(device)
 
-    a = torch.tensor([1.0])
-    b = torch.tensor([1.0])
+    a = torch.tensor([1.0], device=device)
+    b = torch.tensor([1.0], device=device)
 
     # 两者都应该给出正确结果
     assert gate_temporal(a, b).item() == 1.0
@@ -146,14 +150,14 @@ def test_vec_gates():
     """测试向量化门电路的 SpikeMode 支持"""
     SpikeMode.set_global_mode(SpikeMode.BIT_EXACT)
 
-    gate = VecAND()
+    gate = VecAND().to(device)
 
     # 批量输入
-    a = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
-    b = torch.tensor([[1.0, 1.0, 0.0, 0.0]])
+    a = torch.tensor([[1.0, 0.0, 1.0, 0.0]], device=device)
+    b = torch.tensor([[1.0, 1.0, 0.0, 0.0]], device=device)
 
     result = gate(a, b)
-    expected = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+    expected = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
 
     assert torch.allclose(result, expected)
 

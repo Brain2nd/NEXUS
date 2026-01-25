@@ -35,6 +35,9 @@ from atomic_ops.core.logic_gates import (
     HalfAdder, FullAdder
 )
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_dual_rail_encoding():
     """测试双轨编码/解码"""

@@ -25,6 +25,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from atomic_ops import TrainingMode
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_fp32_linear_pulse_weight():
     """Test FP32 Linear with pure pulse weight storage"""

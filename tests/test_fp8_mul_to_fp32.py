@@ -32,16 +32,20 @@ from atomic_ops import (
 )
 from atomic_ops.arithmetic.fp8.fp8_mul_to_fp32 import SpikeFP8MulToFP32
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_basic_multiplication():
     """测试基本乘法正确性"""
     print("\n" + "=" * 60)
     print("测试 1: 基本乘法正确性")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    mul = SpikeFP8MulToFP32()
-    decoder = PulseFP32Decoder()
+    print(f"Device: {device}")
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    mul = SpikeFP8MulToFP32().to(device)
+    decoder = PulseFP32Decoder().to(device)
     
     test_cases = [
         (1.0, 1.0, 1.0),
@@ -59,8 +63,8 @@ def test_basic_multiplication():
     total = len(test_cases)
     
     for a, b, expected in test_cases:
-        a_fp8 = torch.tensor([a]).to(torch.float8_e4m3fn).float()
-        b_fp8 = torch.tensor([b]).to(torch.float8_e4m3fn).float()
+        a_fp8 = torch.tensor([a], device=device).to(torch.float8_e4m3fn).float()
+        b_fp8 = torch.tensor([b], device=device).to(torch.float8_e4m3fn).float()
         expected_fp32 = a_fp8 * b_fp8  # PyTorch 参考
         
         a_pulse = encoder(a_fp8)
@@ -86,24 +90,24 @@ def test_zero_multiplication():
     print("\n" + "=" * 60)
     print("测试 2: 零乘法")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    mul = SpikeFP8MulToFP32()
-    decoder = PulseFP32Decoder()
-    
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    mul = SpikeFP8MulToFP32().to(device)
+    decoder = PulseFP32Decoder().to(device)
+
     test_cases = [
         (0.0, 1.0),
         (0.0, 0.0),
         (1.0, 0.0),
         (0.0, -5.0),
     ]
-    
+
     passed = 0
     total = len(test_cases)
-    
+
     for a, b in test_cases:
-        a_fp8 = torch.tensor([a]).to(torch.float8_e4m3fn).float()
-        b_fp8 = torch.tensor([b]).to(torch.float8_e4m3fn).float()
+        a_fp8 = torch.tensor([a], device=device).to(torch.float8_e4m3fn).float()
+        b_fp8 = torch.tensor([b], device=device).to(torch.float8_e4m3fn).float()
         
         a_pulse = encoder(a_fp8)
         b_pulse = encoder(b_fp8)
@@ -128,19 +132,19 @@ def test_random_alignment():
     print("\n" + "=" * 60)
     print("测试 3: 随机数据对齐")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    mul = SpikeFP8MulToFP32()
-    decoder = PulseFP32Decoder()
-    
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    mul = SpikeFP8MulToFP32().to(device)
+    decoder = PulseFP32Decoder().to(device)
+
     torch.manual_seed(42)
-    
+
     n_tests = 100
     match_count = 0
-    
+
     for i in range(n_tests):
-        a = torch.randn(1) * 2
-        b = torch.randn(1) * 2
+        a = torch.randn(1, device=device) * 2
+        b = torch.randn(1, device=device) * 2
         
         a_fp8 = a.to(torch.float8_e4m3fn).float()
         b_fp8 = b.to(torch.float8_e4m3fn).float()
@@ -173,14 +177,14 @@ def test_batch_operation():
     print("\n" + "=" * 60)
     print("测试 4: 批量操作")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    mul = SpikeFP8MulToFP32()
-    decoder = PulseFP32Decoder()
-    
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    mul = SpikeFP8MulToFP32().to(device)
+    decoder = PulseFP32Decoder().to(device)
+
     # 批量输入
-    a = torch.tensor([1.0, 2.0, 0.5, -1.0, 4.0])
-    b = torch.tensor([2.0, 3.0, 0.5, -2.0, 0.25])
+    a = torch.tensor([1.0, 2.0, 0.5, -1.0, 4.0], device=device)
+    b = torch.tensor([2.0, 3.0, 0.5, -2.0, 0.25], device=device)
     
     a_fp8 = a.to(torch.float8_e4m3fn).float()
     b_fp8 = b.to(torch.float8_e4m3fn).float()

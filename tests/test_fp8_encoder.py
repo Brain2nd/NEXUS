@@ -11,17 +11,21 @@ import torch
 from atomic_ops import PulseFloatingPointEncoder
 from atomic_ops.encoding.pulse_decoder import PulseFloatingPointDecoder
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_fp_encoder():
     """测试基本编码功能"""
     print("=== 基本编码测试 (FP8: E3M4) ===")
-    encoder = PulseFloatingPointEncoder(exponent_bits=3, mantissa_bits=4)
+    print(f"Device: {device}")
+    encoder = PulseFloatingPointEncoder(exponent_bits=3, mantissa_bits=4).to(device)
 
     # Input Shape: [2, 3] (Batch=2, Channel=3)
     inputs = torch.tensor([
         [1.5, -0.25, 0.0],
         [6.0, -1.5, 0.0625]
-    ])
+    ], device=device)
     print(f"Input Shape: {inputs.shape}")
     print(f"Input Values:\n{inputs}")
 
@@ -53,8 +57,8 @@ def test_fp_encoder():
 def test_boundary_values():
     """测试边界值"""
     print("\n=== 边界值测试 (FP8: E4M3) ===")
-    encoder = PulseFloatingPointEncoder(exponent_bits=4, mantissa_bits=3)
-    decoder = PulseFloatingPointDecoder()
+    encoder = PulseFloatingPointEncoder(exponent_bits=4, mantissa_bits=3).to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
 
     # FP8 E4M3 边界值
     boundary_values = [
@@ -76,7 +80,7 @@ def test_boundary_values():
     total = len(boundary_values)
 
     for val in boundary_values:
-        x = torch.tensor([val]).to(torch.float8_e4m3fn).float()
+        x = torch.tensor([val], device=device).to(torch.float8_e4m3fn).float()
         pulse = encoder(x)
         decoded = decoder(pulse)
 
@@ -94,8 +98,8 @@ def test_boundary_values():
 def test_random_values():
     """测试随机值"""
     print("\n=== 随机值测试 (FP8: E4M3) ===")
-    encoder = PulseFloatingPointEncoder(exponent_bits=4, mantissa_bits=3)
-    decoder = PulseFloatingPointDecoder()
+    encoder = PulseFloatingPointEncoder(exponent_bits=4, mantissa_bits=3).to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
 
     torch.manual_seed(42)
 
@@ -110,7 +114,7 @@ def test_random_values():
     total_count = 0
 
     for n, scale, desc in test_configs:
-        x = torch.randn(n) * scale
+        x = torch.randn(n, device=device) * scale
         x_fp8 = x.to(torch.float8_e4m3fn).float()
 
         pulse = encoder(x_fp8)
@@ -132,8 +136,8 @@ def test_random_values():
 def test_batch_shapes():
     """测试不同批量形状"""
     print("\n=== 批量形状测试 ===")
-    encoder = PulseFloatingPointEncoder(exponent_bits=4, mantissa_bits=3)
-    decoder = PulseFloatingPointDecoder()
+    encoder = PulseFloatingPointEncoder(exponent_bits=4, mantissa_bits=3).to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
 
     torch.manual_seed(123)
 
@@ -148,7 +152,7 @@ def test_batch_shapes():
     total = len(shapes)
 
     for shape in shapes:
-        x = torch.randn(shape).to(torch.float8_e4m3fn).float()
+        x = torch.randn(shape, device=device).to(torch.float8_e4m3fn).float()
         pulse = encoder(x)
         decoded = decoder(pulse)
 

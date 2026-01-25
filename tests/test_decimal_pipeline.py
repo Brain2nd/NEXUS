@@ -3,14 +3,18 @@ import sys; import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.pat
 import torch
 from atomic_ops import DecimalScanner, DynamicThresholdIFNode
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 def test_pipeline_T14():
+    print(f"Device: {device}")
     T = 14
     # 1. 初始化原子操作
-    scanner = DecimalScanner(T=T)
+    scanner = DecimalScanner(T=T).to(device)
     # 输出二进制位数：14 需要 4 位 (需要覆盖 2^3=8, 2^2=4, 2^1=2, 2^0=1)
     # 设置 N=4 (代表4位)
-    encoder = DynamicThresholdIFNode(N=4) 
-    
+    encoder = DynamicThresholdIFNode(N=4).to(device)
+
     # 2. 准备测试数据
     # Case 1: 10^14 (t=0 应该发) -> 指数 14 -> 二进制 1110
     # Case 2: 10^13 (t=1 应该发) -> 指数 13 -> 二进制 1101
@@ -24,7 +28,7 @@ def test_pipeline_T14():
         [1e13 + 1],      # 13
         [1e2 + 1],       # 2
         [1e4 + 1]        # 4 -> 二进制 0100
-    ])
+    ], device=device)
     
     print(f"Testing Pipeline with T={T}")
     print(f"Input Values: \n{input_vals}")

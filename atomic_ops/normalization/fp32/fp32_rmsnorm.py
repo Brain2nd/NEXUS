@@ -40,6 +40,7 @@ from atomic_ops.arithmetic.fp64.fp64_div import SpikeFP64Divider
 from atomic_ops.arithmetic.fp64.fp64_sqrt import SpikeFP64Sqrt
 from atomic_ops.arithmetic.fp64.fp64_components import FP32ToFP64Converter, FP64ToFP32Converter
 from atomic_ops.activation.fp64.fp64_exp import make_fp64_constant
+from atomic_ops.encoding.converters import float32_to_pulse
 
 class SpikeFP32RMSNormFullFP64(nn.Module):
     """FP32 RMSNorm 高精度版

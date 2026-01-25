@@ -24,15 +24,19 @@ from atomic_ops import (
     PulseFP32Decoder,
 )
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_fp8_decoder_roundtrip():
     """测试 FP8 编码器→解码器往返精度"""
     print("\n" + "=" * 60)
     print("测试 1: FP8 解码器往返精度")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    decoder = PulseFloatingPointDecoder()
+    print(f"Device: {device}")
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
     
     # 测试各种数值
     test_values = [
@@ -47,7 +51,7 @@ def test_fp8_decoder_roundtrip():
     total = len(test_values)
     
     for val in test_values:
-        x = torch.tensor([val]).to(torch.float8_e4m3fn).float()
+        x = torch.tensor([val], device=device).to(torch.float8_e4m3fn).float()
         pulse = encoder(x)
         decoded = decoder(pulse)
         
@@ -67,35 +71,35 @@ def test_fp8_special_values():
     print("\n" + "=" * 60)
     print("测试 2: 特殊值处理")
     print("=" * 60)
-    
-    decoder = PulseFloatingPointDecoder()
-    
+
+    decoder = PulseFloatingPointDecoder().to(device)
+
     # 测试用例: (字节值, 预期浮点值)
     test_cases = [
         # 零
         (0b00000000, 0.0),      # +0
         (0b10000000, -0.0),     # -0
-        
+
         # Subnormal (E=0, M≠0)
         (0b00000001, 0.001953125),  # 最小正 subnormal: 2^-6 * 1/8
         (0b00000111, 0.013671875),  # 最大正 subnormal: 2^-6 * 7/8
-        
+
         # Normal
         (0b00111000, 1.0),      # 1.0: E=7, M=0
         (0b01000000, 2.0),      # 2.0: E=8, M=0
         (0b00110100, 0.75),     # 0.75: E=6, M=4 → 2^-1 * 1.5
-        
+
         # 最大值
         (0b01111110, 448.0),    # 最大正: E=15, M=6
         (0b11111110, -448.0),   # 最大负
     ]
-    
+
     passed = 0
     total = len(test_cases)
-    
+
     for byte_val, expected in test_cases:
         # 构造脉冲
-        pulse = torch.zeros(1, 8)
+        pulse = torch.zeros(1, 8, device=device)
         for i in range(8):
             pulse[0, i] = (byte_val >> (7 - i)) & 1
         
@@ -105,7 +109,7 @@ def test_fp8_special_values():
         if expected == 0.0:
             match = decoded.item() == 0.0
         else:
-            match = torch.isclose(decoded, torch.tensor([expected]), rtol=1e-5).item()
+            match = torch.isclose(decoded, torch.tensor([expected], device=device), rtol=1e-5).item()
         
         status = "✓" if match else "✗"
         print(f"  {status} 0b{byte_val:08b} → {decoded.item():>12.6f} (预期: {expected:>12.6f})")
@@ -122,10 +126,10 @@ def test_arbitrary_dimensions():
     print("\n" + "=" * 60)
     print("测试 3: 任意维度支持")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    decoder = PulseFloatingPointDecoder()
-    
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
+
     shapes = [
         (10,),
         (5, 8),
@@ -133,12 +137,12 @@ def test_arbitrary_dimensions():
         (2, 2, 2, 2),
         (1, 1, 1, 1, 1),
     ]
-    
+
     passed = 0
     total = len(shapes)
-    
+
     for shape in shapes:
-        x = torch.randn(shape).to(torch.float8_e4m3fn).float()
+        x = torch.randn(shape, device=device).to(torch.float8_e4m3fn).float()
         pulse = encoder(x)
         decoded = decoder(pulse)
         
@@ -162,12 +166,12 @@ def test_batch_random():
     print("\n" + "=" * 60)
     print("测试 4: 大批量随机数据")
     print("=" * 60)
-    
-    encoder = PulseFloatingPointEncoder()
-    decoder = PulseFloatingPointDecoder()
-    
+
+    encoder = PulseFloatingPointEncoder().to(device)
+    decoder = PulseFloatingPointDecoder().to(device)
+
     torch.manual_seed(42)
-    
+
     # 测试多个批次
     test_configs = [
         (100, 0.1),
@@ -175,12 +179,12 @@ def test_batch_random():
         (100, 10.0),
         (1000, 0.5),
     ]
-    
+
     total_match = 0
     total_count = 0
-    
+
     for n, scale in test_configs:
-        x = torch.randn(n) * scale
+        x = torch.randn(n, device=device) * scale
         x_fp8 = x.to(torch.float8_e4m3fn).float()
         
         pulse = encoder(x_fp8)

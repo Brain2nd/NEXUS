@@ -45,38 +45,38 @@ from atomic_ops.core.neurons import SimpleIFNode, SimpleLIFNode
 # 神经元模板 (已移至 neurons.py)
 # ==============================================================================
 
-def _create_neuron(template, threshold, v_reset=None, param_shape='auto',
-                   trainable_threshold=True, trainable_beta=True, beta=None):
+def _create_neuron(template, threshold, v_reset=None,
+                   trainable_threshold=True, trainable_beta=True, beta=None,
+                   max_param_shape=None):
     """从模板创建指定阈值的神经元
 
     Args:
         template: 神经元模板，None 则创建默认 SimpleLIFNode
         threshold: 目标阈值 (float 或 Tensor)
         v_reset: 复位电压 (None=软复位, 数值=硬复位)
-        param_shape: 参数形状 ('auto'=懒加载, None=标量, tuple=指定形状)
         trainable_threshold: 阈值是否可训练（默认True）
         trainable_beta: 泄漏率是否可训练（默认True）
         beta: 泄漏因子 (None=DEFAULT_BETA)
+        max_param_shape: 预分配参数形状，None 使用全局默认
     """
     if template is None:
-        # 默认使用 SimpleLIFNode，启用可训练参数和懒加载
         return SimpleLIFNode(
             beta=beta,
             v_threshold=threshold,
             v_reset=v_reset,
             trainable_beta=trainable_beta,
             trainable_threshold=trainable_threshold,
-            param_shape=param_shape
+            max_param_shape=max_param_shape
         )
     else:
         node = deepcopy(template)
         node.v_threshold = threshold
         if hasattr(node, 'v_reset'):
             node.v_reset = v_reset
-        if hasattr(node, 'param_shape') and param_shape is not None:
-            node.param_shape = param_shape
-        if hasattr(node, 'threshold_shape') and param_shape is not None:
-            node.threshold_shape = param_shape
+        if max_param_shape is not None and hasattr(node, 'max_param_shape'):
+            node.max_param_shape = max_param_shape
+            if hasattr(node, '_preallocate_params'):
+                node._preallocate_params(max_param_shape)
         return node
 
 

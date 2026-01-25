@@ -13,27 +13,31 @@ from atomic_ops.core.spike_mode import SpikeMode
 from atomic_ops.core.vec_logic_gates import VecAND, VecOR, VecXOR
 from atomic_ops.core.logic_gates import ANDGate, ORGate, NOTGate
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_bit_exact_mode():
     """BIT_EXACT 模式：forward 结束后 v 应该被清理"""
     print("=" * 60)
     print("测试 BIT_EXACT 模式")
     print("=" * 60)
+    print(f"Device: {device}")
 
     SpikeMode.set_global_mode(SpikeMode.BIT_EXACT)
     assert SpikeMode.should_reset() == True, "BIT_EXACT 模式应该返回 True"
 
     gates = [
-        ("VecAND", VecAND()),
-        ("VecOR", VecOR()),
-        ("ANDGate", ANDGate()),
-        ("ORGate", ORGate()),
+        ("VecAND", VecAND().to(device)),
+        ("VecOR", VecOR().to(device)),
+        ("ANDGate", ANDGate().to(device)),
+        ("ORGate", ORGate().to(device)),
     ]
 
     all_pass = True
     for name, gate in gates:
-        a = torch.randint(0, 2, (10, 8), dtype=torch.float32)
-        b = torch.randint(0, 2, (10, 8), dtype=torch.float32)
+        a = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
+        b = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
 
         result = gate(a, b)
 
@@ -67,16 +71,16 @@ def test_temporal_mode():
     assert SpikeMode.should_reset() == False, "TEMPORAL 模式应该返回 False"
 
     gates = [
-        ("VecAND", VecAND()),
-        ("VecOR", VecOR()),
-        ("ANDGate", ANDGate()),
-        ("ORGate", ORGate()),
+        ("VecAND", VecAND().to(device)),
+        ("VecOR", VecOR().to(device)),
+        ("ANDGate", ANDGate().to(device)),
+        ("ORGate", ORGate().to(device)),
     ]
 
     all_pass = True
     for name, gate in gates:
-        a = torch.randint(0, 2, (10, 8), dtype=torch.float32)
-        b = torch.randint(0, 2, (10, 8), dtype=torch.float32)
+        a = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
+        b = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
 
         result = gate(a, b)
 
@@ -111,9 +115,9 @@ def test_context_manager():
 
     SpikeMode.set_global_mode(SpikeMode.BIT_EXACT)
 
-    gate = VecAND()
-    a = torch.randint(0, 2, (10, 8), dtype=torch.float32)
-    b = torch.randint(0, 2, (10, 8), dtype=torch.float32)
+    gate = VecAND().to(device)
+    a = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
+    b = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
 
     # 默认 BIT_EXACT
     _ = gate(a, b)
@@ -148,12 +152,12 @@ def test_instance_mode_override():
     SpikeMode.set_global_mode(SpikeMode.BIT_EXACT)
 
     # 创建一个强制 TEMPORAL 的实例
-    gate_temporal = VecAND(mode=SpikeMode.TEMPORAL)
+    gate_temporal = VecAND(mode=SpikeMode.TEMPORAL).to(device)
     # 创建一个跟随全局的实例
-    gate_global = VecAND()
+    gate_global = VecAND().to(device)
 
-    a = torch.randint(0, 2, (10, 8), dtype=torch.float32)
-    b = torch.randint(0, 2, (10, 8), dtype=torch.float32)
+    a = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
+    b = torch.randint(0, 2, (10, 8), dtype=torch.float32, device=device)
 
     _ = gate_temporal(a, b)
     _ = gate_global(a, b)

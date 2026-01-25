@@ -466,22 +466,6 @@ def test_minimal():
             with timed(f"L{layer_idx} residual_mlp", show_mem=True):
                 hidden_states = layer.residual_add_mlp(residual, mlp_out)
 
-            # 记录清理前显存
-            alloc_before, _ = mem_tracker.record(f"Layer{layer_idx} 清理前")
-            print(f"      清理前: {alloc_before:.1f}MB")
-
-            # 删除本层中间变量
-            del Q, K, V, attn_scores, attn_weights, attn_out, attn_flat
-            del residual, gate, up, hidden_mlp, mlp_out
-
-            # 强制 GC（不会删除有引用的模型参数）
-            force_gc()
-
-            # 记录清理后显存
-            alloc_after, delta = mem_tracker.record(f"Layer{layer_idx} 清理后")
-            freed = alloc_before - alloc_after
-            print(f"      清理后: {alloc_after:.1f}MB (释放: {freed:.1f}MB, 相对基线: {delta:+.1f}MB)")
-
         # Final Norm
         with timed("final_norm", show_mem=True):
             hidden_states = snn_model.model.norm(hidden_states)

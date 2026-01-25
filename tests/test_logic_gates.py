@@ -3,47 +3,51 @@ import sys; import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.pat
 import torch
 from atomic_ops import ANDGate, ORGate, XORGate, FullAdder
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 def test_logic_gates():
     print("=== Testing Spike Logic Gates ===")
-    
+    print(f"Device: {device}")
+
     # Data: 4 cases [0,0], [0,1], [1,0], [1,1]
-    a = torch.tensor([[0.], [0.], [1.], [1.]])
-    b = torch.tensor([[0.], [1.], [0.], [1.]])
+    a = torch.tensor([[0.], [0.], [1.], [1.]], device=device)
+    b = torch.tensor([[0.], [1.], [0.], [1.]], device=device)
     
     # 1. AND
     print("\n1. AND Gate")
-    gate_and = ANDGate()
+    gate_and = ANDGate().to(device)
     gate_and.reset()
     out_and = gate_and(a, b)
     print(f"Inputs A,B -> Out:\n{torch.cat([a, b, out_and], dim=1).int()}")
-    expected_and = torch.tensor([[0], [0], [0], [1]])
+    expected_and = torch.tensor([[0], [0], [0], [1]], device=device)
     if torch.equal(out_and.int(), expected_and.int()): print("PASS")
     else: print("FAIL")
 
     # 2. OR
     print("\n2. OR Gate")
-    gate_or = ORGate()
+    gate_or = ORGate().to(device)
     gate_or.reset()
     out_or = gate_or(a, b)
     print(f"Inputs A,B -> Out:\n{torch.cat([a, b, out_or], dim=1).int()}")
-    expected_or = torch.tensor([[0], [1], [1], [1]])
+    expected_or = torch.tensor([[0], [1], [1], [1]], device=device)
     if torch.equal(out_or.int(), expected_or.int()): print("PASS")
     else: print("FAIL")
 
     # 3. XOR
     print("\n3. XOR Gate")
-    gate_xor = XORGate()
+    gate_xor = XORGate().to(device)
     gate_xor.reset()
     out_xor = gate_xor(a, b)
     print(f"Inputs A,B -> Out:\n{torch.cat([a, b, out_xor], dim=1).int()}")
-    expected_xor = torch.tensor([[0], [1], [1], [0]])
+    expected_xor = torch.tensor([[0], [1], [1], [0]], device=device)
     if torch.equal(out_xor.int(), expected_xor.int()): print("PASS")
     else: print("FAIL")
 
 def test_full_adder():
     print("\n=== Testing Full Adder ===")
-    adder = FullAdder()
-    
+    adder = FullAdder().to(device)
+
     # Truth table for Full Adder (8 cases)
     # A B Cin -> Sum Cout
     # 0 0 0 -> 0 0
@@ -54,15 +58,15 @@ def test_full_adder():
     # 1 0 1 -> 0 1
     # 1 1 0 -> 0 1
     # 1 1 1 -> 1 1
-    
+
     cases = [
         [0,0,0], [0,0,1], [0,1,0], [0,1,1],
         [1,0,0], [1,0,1], [1,1,0], [1,1,1]
     ]
-    
-    a = torch.tensor([[c[0]] for c in cases])
-    b = torch.tensor([[c[1]] for c in cases])
-    cin = torch.tensor([[c[2]] for c in cases])
+
+    a = torch.tensor([[c[0]] for c in cases], dtype=torch.float32, device=device)
+    b = torch.tensor([[c[1]] for c in cases], dtype=torch.float32, device=device)
+    cin = torch.tensor([[c[2]] for c in cases], dtype=torch.float32, device=device)
     
     adder.reset()
     # 注意：Full Adder 内部由多个 Gate 组成，信号传递是瞬时的(在前向传播中完成)
@@ -77,8 +81,8 @@ def test_full_adder():
         print(f"{int(a[i])} {int(b[i])} {int(cin[i])}   | {int(s_out[i])}   {int(c_out[i])}")
         
     # Verification
-    expected_s = torch.tensor([[0], [1], [1], [0], [1], [0], [0], [1]])
-    expected_c = torch.tensor([[0], [0], [0], [1], [0], [1], [1], [1]])
+    expected_s = torch.tensor([[0], [1], [1], [0], [1], [0], [0], [1]], device=device)
+    expected_c = torch.tensor([[0], [0], [0], [1], [0], [1], [1], [1]], device=device)
     
     if torch.equal(s_out.int(), expected_s.int()) and torch.equal(c_out.int(), expected_c.int()):
         print("\nFULL ADDER PASSED")

@@ -181,32 +181,45 @@ Float Input → [Encoder] → Pulse Sequence → [SNN Gates] → Pulse Sequence 
 
 **Neuron Template System**: All components support `neuron_template` parameter. Default is `SimpleLIFNode` with:
 - `DEFAULT_BETA = 1.0 - 1e-7` (near-zero leak, maintains bit-exact results)
+- `DEFAULT_MAX_PARAM_SHAPE = (64,)` (预分配64位参数，覆盖 FP8/16/32/64)
 - `trainable_threshold=True`, `trainable_beta=True` (trainable parameters enabled by default)
-- `param_shape='auto'` (lazy initialization - tensor dimensions determined on first forward pass)
-
-**Lazy Initialization Constraint**: 懒加载使用 `x.shape[1:]` 确定参数形状，**要求 batch 维度必须在第0维**：
-```
-x.shape = [batch, 32]      → param.shape = [32]      ✓
-x.shape = [batch, 8, 32]   → param.shape = [8, 32]   ✓
-x.shape = [32]             → param.shape = []        ⚠ 无batch维度，可能出错
-x.shape = [32, batch]      → param.shape = [batch]   ✗ batch在错误位置
-```
 
 ```python
 from atomic_ops import ANDGate, SimpleLIFNode, SimpleIFNode, SpikeFP32Adder
 
-# Default: SimpleLIFNode with DEFAULT_BETA (trainable params enabled, lazy init)
+# Default: 自动预分配 64 位参数
 and_gate = ANDGate()
 
 # Custom LIF with different beta (for physical simulation)
 lif_template = SimpleLIFNode(beta=0.9)
 and_gate_lif = ANDGate(neuron_template=lif_template)
-adder_lif = SpikeFP32Adder(neuron_template=lif_template)
 
-# Use SimpleIFNode if needed (backward compatibility)
-if_template = SimpleIFNode()
-and_gate_if = ANDGate(neuron_template=if_template)
+# 指定更小的预分配形状（节省显存）
+gate_8bit = ANDGate(max_param_shape=(8,))
 ```
+
+**Preload Slice Mechanism (预分配切片机制)**:
+
+**工作原理**：
+1. `__init__()` 时预分配参数（默认 64 位）
+2. `forward()` 时根据实际输入位宽**切片**使用：`param[..., :input_bits]`
+3. `reset()` 时保留参数，只重置膜电位 `self.v = None`
+
+```python
+# 默认预分配 64 位，支持所有精度
+gate = ANDGate()
+result = gate(a_32bit, b_32bit)  # 使用 param[:32]
+
+# 传播到子组件
+class MyComponent(nn.Module):
+    def __init__(self, max_param_shape=None):
+        self.gate = ANDGate(max_param_shape=max_param_shape)
+```
+
+**优势**：
+- 避免动态内存分配导致的显存碎片
+- `reset()` 不销毁参数，避免反复创建/销毁开销
+- 默认覆盖所有精度 (FP8/16/32/64)
 
 ### Reset Mechanisms
 - **All components use soft reset** (V = V - V_threshold) by default

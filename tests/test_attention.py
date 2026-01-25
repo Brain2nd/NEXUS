@@ -22,6 +22,9 @@ from atomic_ops import (
     float16_to_pulse,
 )
 
+# GPU 设备选择 (CLAUDE.md #9)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def test_fp32_attention_shape():
     """测试 FP32 注意力输出形状"""

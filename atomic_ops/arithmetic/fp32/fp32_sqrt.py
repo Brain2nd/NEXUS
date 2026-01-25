@@ -10,7 +10,10 @@ FP32 平方根函数 - 100%纯SNN门电路实现
 """
 import torch
 import torch.nn as nn
-from atomic_ops.core.logic_gates import (FullAdder)
+from atomic_ops.core.logic_gates import FullAdder
+from atomic_ops.core.vec_logic_gates import (
+    VecNOT, VecMUX, VecOR, VecAND, VecAdder
+)
 
 
 class Subtractor50Bit(nn.Module):
