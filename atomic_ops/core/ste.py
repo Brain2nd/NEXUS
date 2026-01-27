@@ -62,19 +62,41 @@ class SNNBackwardComponents:
         self.sign_not = NOTGate(neuron_template=neuron_template)
         self.constants = PulseConstants(device=device)
 
+        # 移动所有组件到指定设备
+        if device is not None:
+            self.vec_mul = self.vec_mul.to(device)
+            self.vec_add = self.vec_add.to(device)
+            self.vec_sub = self.vec_sub.to(device)
+            self.vec_div = self.vec_div.to(device)
+            self.vec_and = self.vec_and.to(device)
+            self.matmul_t = self.matmul_t.to(device)
+            self.outer_product = self.outer_product.to(device)
+            self.sign_not = self.sign_not.to(device)
+
         self._initialized = True
         self._device = device
 
     def get(self, device=None, neuron_template=None):
         """获取组件，必要时初始化"""
-        if not self._initialized or (device is not None and device != self._device):
+        if not self._initialized:
             self._init_components(device, neuron_template)
+        elif device is not None and device != self._device:
+            self.to(device)
         return self
 
     def to(self, device):
         """移动组件到新设备"""
-        if device != self._device:
-            self._init_components(device)
+        if device != self._device and self._initialized:
+            self.vec_mul = self.vec_mul.to(device)
+            self.vec_add = self.vec_add.to(device)
+            self.vec_sub = self.vec_sub.to(device)
+            self.vec_div = self.vec_div.to(device)
+            self.vec_and = self.vec_and.to(device)
+            self.matmul_t = self.matmul_t.to(device)
+            self.outer_product = self.outer_product.to(device)
+            self.sign_not = self.sign_not.to(device)
+            self.constants = self.constants.to(device) if hasattr(self.constants, 'to') else self.constants
+            self._device = device
         return self
 
 
