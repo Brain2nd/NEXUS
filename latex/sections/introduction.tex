@@ -6,14 +6,9 @@ The computing world faces a dual crisis: the end of Moore's Law and the energy e
 
 Despite their promise for brain-inspired computing, SNNs have long been perceived as \textbf{inherently approximate computational models}. This ``precision barrier'' relegates SNNs to pattern recognition and sensory processing tasks, while high-fidelity computations---scientific simulations, financial modeling, and modern deep learning algorithms requiring precise gradients---must be outsourced to traditional coprocessors~\citep{george2019neuromorphic,dubey2020floating}. This hybrid approach fundamentally compromises the vision of pure neuromorphic computing.
 
-This raises a fundamental question: \textit{Can we break the ``SNN = approximate computation'' paradigm?} Specifically:
-\begin{itemize}
-    \item Can SNNs execute \textbf{verifiable, bit-exact IEEE 754 floating-point arithmetic} like traditional CPUs?
-    \item Can such a precise SNN framework be \textbf{effectively trained} via gradient-based methods?
-    \item Can it operate \textbf{robustly on physical hardware} with noise, leakage, and process variations?
-\end{itemize}
+This work challenges the prevailing assumption that SNNs are inherently approximate. Conventional SNN approaches encode information in spike rates or timing, inherently limiting precision to statistical estimates. In contrast, we adopt a fundamentally different paradigm: treating each spike as a \textbf{binary digit} and constructing \textbf{digital logic gates} from spiking neurons. This approach transforms SNNs from analog computers into bit-exact digital circuits, achieving IEEE 754 compliance while retaining the event-driven efficiency of neuromorphic hardware.
 
-We answer all three questions affirmatively by presenting \textbf{MofNeuroSim}, a framework that implements IEEE 754 floating-point arithmetic entirely through spiking neural networks using Generalized Leaky Integrate-and-Fire (GLIF) neurons. Our contributions are:
+We present \textbf{MofNeuroSim}, a framework that implements IEEE 754 floating-point arithmetic entirely through spiking neural networks using Generalized Leaky Integrate-and-Fire (GLIF) neurons. The framework achieves three critical objectives: (1) bit-exact precision matching traditional CPUs, (2) gradient-based trainability via Straight-Through Estimator, and (3) robustness under physical hardware constraints including noise and leakage. Our contributions are:
 
 \begin{enumerate}
     \item \textbf{Theoretical Foundation}: We prove the \textit{GLIF Topological Embedding Theorem}, establishing that GLIF networks with soft reset and dynamic thresholds create deterministic, chaos-free computation spaces homeomorphic to high-dimensional tori. This theorem has three profound implications:

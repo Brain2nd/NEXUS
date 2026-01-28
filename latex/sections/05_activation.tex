@@ -10,33 +10,43 @@ This section describes how common neural network activation functions are implem
 \subsubsection{Exponential Function}
 \label{sec:exp}
 
-The exponential function $e^x$ is fundamental to many activations. We implement it using the Taylor series expansion given by Equation~\ref{eq:exp_taylor}:
+The exponential function $e^x$ is fundamental to many activations. We implement it using a table-driven algorithm entirely through SNN operators.
+
+\paragraph{Algorithm Overview}
+The computation uses $N=32$ subdivisions per octave as given by Equation~\ref{eq:exp_decomp}:
 
 \begin{equation}
-e^x = \sum_{n=0}^{N} \frac{x^n}{n!} = 1 + x + \frac{x^2}{2!} + \frac{x^3}{3!} + \cdots
-\label{eq:exp_taylor}
+z = \text{round}(x \cdot N / \ln 2), \quad k = \lfloor z/N \rfloor, \quad j = z \mod N
+\label{eq:exp_decomp}
 \end{equation}
-where $x$ denotes the input value, $N$ denotes the number of terms, and $n!$ denotes the factorial of $n$.
-
-\paragraph{Range Reduction}
-For numerical stability and convergence, we first reduce the input range. Using $e^x = 2^{x/\ln 2}$, the range reduction formula is given by Equation~\ref{eq:range_reduce}:
-
-\begin{equation}
-e^x = 2^k \times e^r
-\label{eq:range_reduce}
-\end{equation}
-where $k = \lfloor x / \ln 2 \rfloor$ denotes the integer part and $r = x - k \ln 2$ denotes the remainder, ensuring $|r| < \ln 2 / 2$.
-
-\paragraph{Polynomial Approximation}
-For the reduced argument $r$, we use a truncated Taylor series. The number of terms $N$ depends on the required precision:
-
-\begin{itemize}
-    \item FP32: $N = 12$ terms for $< 1$ ULP error
-    \item FP64: $N = 18$ terms for $< 1$ ULP error
-\end{itemize}
+where $z$ denotes the scaled input, $k$ denotes the integer exponent, and $j \in [0, 31]$ denotes the table index.
 
 \paragraph{SNN Implementation}
-Each Taylor term $x^n/n!$ is computed via repeated SNN multiplication (powers) with precomputed $1/n!$ constants, then accumulated using an SNN adder tree. The final result is scaled by $2^k$ via exponent adjustment.
+The computation proceeds entirely through SNN gates:
+\begin{itemize}
+    \item \textbf{Scaling}: $x \cdot (N/\ln 2)$ via SNN multiplier with precomputed constant
+    \item \textbf{Rounding}: SNN floor function using comparators and MUX gates
+    \item \textbf{Table lookup}: 5-layer MUX tree selects from 32 precomputed $T[j] = 2^{j/32}$ constants stored as pulse sequences
+    \item \textbf{Remainder}: $r = x - z \cdot \ln 2$ via SNN subtraction
+\end{itemize}
+
+\paragraph{Polynomial Evaluation}
+A degree-3 minimax polynomial approximates $e^r$ for $|r| < \ln 2/64$:
+
+\begin{equation}
+P(r) = 1 + r + C_2 r^2 + C_3 r^3
+\label{eq:exp_poly}
+\end{equation}
+where $C_2, C_3$ are precomputed pulse constants. Horner's method ($P = 1 + r(1 + r(C_2 + r \cdot C_3))$) minimizes SNN multiplications.
+
+\paragraph{Result Reconstruction}
+The final result combines components using SNN operators:
+
+\begin{equation}
+e^x = 2^k \times T[j] \times P(r)
+\label{eq:exp_result}
+\end{equation}
+where $2^k$ scaling adjusts the exponent field directly via SNN bit manipulation, and $T[j] \times P(r)$ uses SNN multiplication.
 
 \subsubsection{Sigmoid Function}
 \label{sec:sigmoid}
