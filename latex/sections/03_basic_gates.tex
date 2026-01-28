@@ -77,25 +77,20 @@ where $x \in \{0, 1\}$ denotes the binary input. This can be interpreted as a ne
 
 \subsubsection{XOR Gate}
 
-The XOR gate cannot be implemented with a single neuron (it is not linearly separable). We implement it using a three-neuron network as given by Equation~\ref{eq:xor}:
+The XOR gate cannot be implemented with a single neuron (it is not linearly separable). We implement it using a five-neuron network as given by Equation~\ref{eq:xor}:
 
 \begin{equation}
-\text{XOR}(x_1, x_2) = \text{OR}(x_1, x_2) - \text{AND}(x_1, x_2)
+\text{XOR}(a, b) = (a \land \lnot b) \lor (\lnot a \land b)
 \label{eq:xor}
 \end{equation}
-where $x_1, x_2 \in \{0, 1\}$ denote the binary inputs. Equivalently, using the algebraic identity given by Equation~\ref{eq:xor_alt}:
-
-\begin{equation}
-\text{XOR}(x_1, x_2) = \text{AND}(\text{OR}(x_1, x_2), \text{NOT}(\text{AND}(x_1, x_2)))
-\label{eq:xor_alt}
-\end{equation}
+where $a, b \in \{0, 1\}$ denote the binary inputs. This requires 2 NOT gates, 2 AND gates, and 1 OR gate.
 
 \paragraph{Verification}
 \begin{align}
-\text{XOR}(0, 0) &= 0 - 0 = 0 \\
-\text{XOR}(0, 1) &= 1 - 0 = 1 \\
-\text{XOR}(1, 0) &= 1 - 0 = 1 \\
-\text{XOR}(1, 1) &= 1 - 1 = 0
+\text{XOR}(0, 0) &= (0 \land 1) \lor (1 \land 0) = 0 \lor 0 = 0 \\
+\text{XOR}(0, 1) &= (0 \land 0) \lor (1 \land 1) = 0 \lor 1 = 1 \\
+\text{XOR}(1, 0) &= (1 \land 1) \lor (0 \land 0) = 1 \lor 0 = 1 \\
+\text{XOR}(1, 1) &= (1 \land 0) \lor (0 \land 1) = 0 \lor 0 = 0
 \end{align}
 
 \subsubsection{Multiplexer (MUX) Gate}
@@ -171,7 +166,7 @@ Table~\ref{tab:gates} summarizes the logic gate implementations:
 AND & 1.5 & $\heaviside(x_1 + x_2 - 1.5)$ & 1 \\
 OR & 0.5 & $\heaviside(x_1 + x_2 - 0.5)$ & 1 \\
 NOT & 0.5 & $\heaviside(0.5 - x)$ & 1 \\
-XOR & -- & OR $-$ AND & 3 \\
+XOR & -- & OR(AND, AND) & 5 \\
 MUX & -- & OR(AND, AND) & 4 \\
 \bottomrule
 \end{tabular}
