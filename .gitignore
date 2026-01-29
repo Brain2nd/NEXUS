@@ -19,13 +19,4 @@ logs/
 results/
 .DS_Store
 .cursor/
-
-# LaTeX build artifacts (keep source files)
-latex/*.aux
-latex/*.bbl
-latex/*.blg
-latex/*.fdb_latexmk
-latex/*.fls
-latex/*.out
-latex/*.synctex.gz
-latex/*.toc
+latex/
