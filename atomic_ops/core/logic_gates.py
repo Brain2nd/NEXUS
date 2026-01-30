@@ -95,16 +95,17 @@ from .spike_mode import SpikeMode
 
 
 def _create_neuron(template, threshold, v_reset=None,
-                   trainable_threshold=True, trainable_beta=True, beta=None,
-                   max_param_shape=None):
+                   beta=None, max_param_shape=None,
+                   # 兼容旧调用，忽略这些参数
+                   trainable_threshold=True, trainable_beta=True):
     """从模板创建指定阈值的神经元
+
+    所有参数始终为 nn.Parameter (可训练)，无需 trainable 开关。
 
     Args:
         template: 神经元模板，None 则创建默认 SimpleLIFNode
         threshold: 目标阈值 (float 或 Tensor)
         v_reset: 复位电压 (None=软复位, 数值=硬复位)
-        trainable_threshold: 阈值是否可训练（默认True）
-        trainable_beta: 泄漏率是否可训练（默认True）
         beta: 泄漏因子 (None=DEFAULT_BETA)
         max_param_shape: 预分配参数形状，None 使用全局默认 DEFAULT_MAX_PARAM_SHAPE (64,)
 
@@ -117,13 +118,11 @@ def _create_neuron(template, threshold, v_reset=None,
             beta=beta,  # None 使用 DEFAULT_BETA (1.0 - 1e-7)
             v_threshold=threshold,
             v_reset=v_reset,
-            trainable_beta=trainable_beta,
-            trainable_threshold=trainable_threshold,
             max_param_shape=max_param_shape
         )
     else:
         node = deepcopy(template)
-        # 设置阈值
+        # 设置阈值 (就地 fill_ 预分配 Parameter)
         node.v_threshold = threshold
         if hasattr(node, 'v_reset'):
             node.v_reset = v_reset

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MofNeuroSim is a **100% pure Spiking Neural Network (SNN)** implementation of IEEE floating-point arithmetic for MOF chip simulation. Unlike traditional neuromorphic frameworks, this achieves **bit-exact** results (0 ULP error) by implementing all computations entirely in the pulse domain using Integrate-and-Fire (IF) neurons.
+NEXUS is a **100% pure Spiking Neural Network (SNN)** implementation of IEEE floating-point arithmetic achieving **bit-exact ANN-to-SNN equivalence**. Unlike traditional neuromorphic frameworks, this achieves **bit-exact** results (0 ULP error) by implementing all computations entirely in the pulse domain using Integrate-and-Fire (IF) neurons.
 
 **Key Constraint**: Traditional Python arithmetic (`+`, `-`, `*`) is forbidden in computation paths. All operations must use SNN gates (ANDGate, ORGate, NOTGate, XORGate, etc.).
 
@@ -146,6 +146,9 @@ python tests/test_fp8_mul.py
 python tests/test_fp32_adder.py
 python tests/test_logic_gates.py
 
+# Run end-to-end model validation
+python tests/test_qwen3_e2e_full.py
+
 # Run physical simulation tests (LIF neurons)
 python tests/test_robustness.py
 ```
@@ -182,7 +185,7 @@ Float Input → [Encoder] → Pulse Sequence → [SNN Gates] → Pulse Sequence 
 **Neuron Template System**: All components support `neuron_template` parameter. Default is `SimpleLIFNode` with:
 - `DEFAULT_BETA = 1.0 - 1e-7` (near-zero leak, maintains bit-exact results)
 - `DEFAULT_MAX_PARAM_SHAPE = (64,)` (预分配64位参数，覆盖 FP8/16/32/64)
-- `trainable_threshold=True`, `trainable_beta=True` (trainable parameters enabled by default)
+- 所有参数（threshold, beta）始终为 `nn.Parameter`（可训练），无 trainable 开关
 
 ```python
 from atomic_ops import ANDGate, SimpleLIFNode, SimpleIFNode, SpikeFP32Adder
@@ -226,31 +229,42 @@ class MyComponent(nn.Module):
 - **Encoder** (`DynamicThresholdIFNode`): Soft reset preserves residual for multi-bit extraction
 - **Logic Gates**: Soft reset ensures consistent behavior across IF/LIF neuron templates
 
-### SpikeMode - Dual Mode Control System
-The `SpikeMode` system provides flexible control over neuron state management:
+### SpikeMode - 两种计算范式
+`SpikeMode` 系统控制框架在两种根本不同的计算范式之间切换：
+
+| | BIT_EXACT（数字计算） | TEMPORAL（生物计算） |
+|---|---|---|
+| **本质** | 组合逻辑电路，无状态 | 生物神经元，有状态 |
+| **膜电位** | forward() 后自动清除 (`v = None`) | 跨调用累积 (`V = β×V + I`) |
+| **多次调用** | 每次结果相同（确定性） | 结果依赖历史（时间依赖） |
+| **特性** | 比特精确、可复现 | 亚阈值累积、泄漏衰减 |
+| **当前用途** | 推理 + STE训练（前向+反向） | 物理仿真（LIF鲁棒性测试等） |
+| **训练支持** | ✅ STE 已实现（ste.py） | ❌ 时间依赖学习规则（未来扩展） |
+
+**当前训练体系**：STE（Straight-Through Estimator）的前向传播和反向传播**均基于 BIT_EXACT 模式**。反向传播全部使用 SNN 门电路实现（见 `ste.py`）。STE 要求前向传播是无状态的确定性计算，因此必须使用 BIT_EXACT 模式。
+
+**TEMPORAL 模式现状**：门电路层面的膜电位残余累积机制已就绪，但基于时间动力学的训练流程（如 BPTT）尚未实现。当前主要用于物理非理想性仿真（LIF泄漏、突触噪声等，见 `test_robustness.py`）。
 
 ```python
 from atomic_ops import SpikeMode, VecAND
 
-# 1. Default: BIT_EXACT mode (推理/验证)
+# 1. BIT_EXACT mode（默认）- 数字计算：推理与STE训练
 gate = VecAND()
-result = gate(a, b)  # Gates auto-reset before forward, no residual
+result = gate(a, b)  # forward后自动清除膜电位，无残余
 
-# 2. TEMPORAL mode (训练/时间动力学)
+# 2. TEMPORAL mode - 生物计算：物理仿真
 SpikeMode.set_global_mode(SpikeMode.TEMPORAL)
-for epoch in range(100):
-    output = model(input)  # Residuals accumulate, enabling temporal dynamics
+output = model(input)  # 膜电位残余跨调用累积
 
-# 3. Context manager (类似 torch.no_grad())
-with SpikeMode.temporal():
-    loss = model(input)
-    loss.backward()  # Training with temporal residuals
-
+# 3. Context manager（类似 torch.no_grad()）
 with SpikeMode.bit_exact():
-    result = model(input)  # Bit-exact inference
+    result = model(input)  # 比特精确推理
 
-# 4. Instance-level override (特定组件固定行为)
-gate = VecAND(mode=SpikeMode.TEMPORAL)  # This gate always preserves residuals
+with SpikeMode.temporal():
+    output = model(input)  # 生物时间动力学
+
+# 4. Instance-level override（特定组件固定行为）
+gate = VecAND(mode=SpikeMode.TEMPORAL)  # 此门始终保留膜电位残余
 ```
 
 **Mode Priority**: Instance mode > Context mode > Global mode
@@ -264,19 +278,22 @@ gate = VecAND(mode=SpikeMode.TEMPORAL)  # This gate always preserves residuals
 ## Code Organization
 
 - `atomic_ops/` - Core SNN components
-  - `logic_gates.py` - Basic gates (AND, OR, NOT, XOR, MUX) and neuron templates
-  - `vec_logic_gates.py` - Vectorized parallel gates for batch operations
-  - `neurons.py` - IF/LIF neuron implementations
-  - `floating_point.py` - FP8 encoder
-  - `pulse_decoder.py` - Multi-precision decoders
-  - `fp{8,16,32,64}_*.py` - Precision-specific arithmetic modules
+  - `core/` - IF/LIF neurons, logic gates, vectorized gates
+  - `encoding/` - Spatial bit encoding (float ↔ pulse)
+  - `arithmetic/` - FP8/16/32/64 arithmetic circuits
+  - `activation/` - Exp, sigmoid, tanh, GELU, SiLU, softmax
+  - `normalization/` - LayerNorm, RMSNorm
+  - `linear/` - Linear layers (multi-precision)
+  - `attention/` - Multi-head attention, RoPE
+  - `trigonometry/` - Sin/Cos (FP32/FP64)
   - `dual_rail/` - Dual-rail logic implementation
 
 - `tests/` - Comprehensive test suite
   - `test_suite.py` - Main test runner
   - `test_all_precision_alignment.py` - 100% alignment verification
+  - `test_qwen3_e2e_full.py` - End-to-end model validation
 
-- `models/` - Example SNN inference models
+- `models/` - Complete SNN models (Qwen3 architecture)
 
 ## Supported Precisions
 
