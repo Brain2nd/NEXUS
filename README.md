@@ -1,12 +1,17 @@
 # NEXUS
 
+> **License: GPLv3 | Academic Use Only**
+>
+> For commercial licensing, please contact: zztangbu@bu.edu or tangzhengzheng.ai@gmail.com
+
 ![Status](https://img.shields.io/badge/Status-Preprint-orange)
+![arXiv](https://img.shields.io/badge/arXiv-2601.21279-b31b1b.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)
 
 **NEXUS: Bit-Exact ANN-to-SNN Equivalence via Neuromorphic Gate Circuits with Surrogate-Free Training**
 
-Code available at [https://github.com/Brain2nd/NEXUS](https://github.com/Brain2nd/NEXUS)
+Paper: [arXiv:2601.21279](https://arxiv.org/abs/2601.21279) | Code: [https://github.com/Brain2nd/NEXUS](https://github.com/Brain2nd/NEXUS)
 
 ---
 
@@ -228,8 +233,9 @@ NEXUS/
   title     = {NEXUS: Bit-Exact ANN-to-SNN Equivalence via Neuromorphic
                Gate Circuits with Surrogate-Free Training},
   author    = {Tang, Zhengzheng},
-  journal   = {Preprint},
+  journal   = {arXiv preprint arXiv:2601.21279},
   year      = {2026},
+  note      = {7 pages, 6 tables, 2 figures},
 }
 ```
 
@@ -237,7 +243,11 @@ NEXUS/
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the **GNU General Public License v3.0 (GPLv3)** for **Academic Use Only**.
+
+For commercial licensing inquiries, please contact:
+- Email: zztangbu@bu.edu
+- Email: tangzhengzheng.ai@gmail.com
 
 ---
 
