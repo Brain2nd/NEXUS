@@ -20,3 +20,6 @@ results/
 .DS_Store
 .cursor/
 latex/
+
+# Large experiment data files (>50MB)
+experiments/*_data.json
