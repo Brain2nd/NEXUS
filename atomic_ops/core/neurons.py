@@ -111,26 +111,31 @@ class SimpleIFNode(nn.Module):
     def forward(self, x):
         # 预分配模式：参数已在 __init__ 中创建，根据输入位宽切片
         input_bits = x.shape[-1] if x.dim() > 0 else 1
-        threshold = self._v_threshold[..., :input_bits]
+        batch_shape = x.shape[:-1]
+        threshold = self._v_threshold[..., :input_bits].to(x.device)
 
-        # 初始化膜电位
-        if self.v is None:
-            self.v = torch.zeros_like(x)
+        # 预分配膜电位：batch 维度需要匹配，bits 维度预分配到 max_param_shape
+        max_bits = self.max_param_shape[-1]
+        if self.v is None or self.v.shape[:-1] != batch_shape:
+            self.v = torch.zeros(*batch_shape, max_bits, device=x.device, dtype=x.dtype)
+
+        # 切片到当前 bits
+        v = self.v[..., :input_bits]
 
         # 膜电位积累 (就地操作避免内存分配)
-        self.v.add_(x)
+        v.add_(x)
 
         # 发放判断
-        spike = (self.v >= threshold).float()
+        spike = (v >= threshold).float()
 
         # 复位
         if self.v_reset is None:
             # 软复位: V = V - spike × V_th
-            self.v.sub_(spike * threshold)
+            v.sub_(spike * threshold)
         else:
             # 硬复位
-            reset_val = torch.full_like(self.v, self.v_reset)
-            self.v.copy_(torch.where(spike > 0, reset_val, self.v))
+            reset_val = torch.full_like(v, self.v_reset)
+            v.copy_(torch.where(spike > 0, reset_val, v))
 
         return spike
 
@@ -248,14 +253,36 @@ class SimpleLIFNode(nn.Module):
         """获取阈值"""
         return self._v_threshold
 
+    @v_threshold.setter
+    def v_threshold(self, value):
+        """设置阈值 - 用于 _create_neuron 覆盖模板阈值
+
+        预分配切片机制：更新默认值并重新填充预分配张量
+        """
+        if isinstance(value, (int, float)):
+            self._threshold_default = float(value)
+        else:
+            self._threshold_default = float(value.mean().item())
+        # 重新填充预分配的参数
+        self._v_threshold.data.fill_(self._threshold_default)
+
     def _preallocate_params(self, shape: tuple):
         """在 __init__ 时一次性预分配最大尺寸参数
 
         Args:
             shape: 要预分配的参数形状 (例如 (32,) 表示32位)
         """
+        # 检测现有参数的设备（用于 deepcopy 后重新分配时保持设备一致）
+        device = None
+        if hasattr(self, '_beta') and self._beta is not None:
+            device = self._beta.device
+        elif hasattr(self, '_v_threshold') and self._v_threshold is not None:
+            device = self._v_threshold.device
+
         # 预分配 beta
         beta_tensor = torch.full(shape, self._beta_default, dtype=torch.float32)
+        if device is not None:
+            beta_tensor = beta_tensor.to(device)
         if self.trainable_beta:
             self._beta = nn.Parameter(beta_tensor)
         else:
@@ -263,6 +290,8 @@ class SimpleLIFNode(nn.Module):
 
         # 预分配 threshold
         threshold_tensor = torch.full(shape, self._threshold_default, dtype=torch.float32)
+        if device is not None:
+            threshold_tensor = threshold_tensor.to(device)
         if self.trainable_threshold:
             self._v_threshold = nn.Parameter(threshold_tensor)
         else:
@@ -271,27 +300,32 @@ class SimpleLIFNode(nn.Module):
     def forward(self, x):
         # 预分配模式：参数已在 __init__ 中创建，根据输入位宽切片
         input_bits = x.shape[-1] if x.dim() > 0 else 1
-        beta = self._beta[..., :input_bits]
-        threshold = self._v_threshold[..., :input_bits]
+        batch_shape = x.shape[:-1]
+        beta = self._beta[..., :input_bits].to(x.device)
+        threshold = self._v_threshold[..., :input_bits].to(x.device)
 
-        # 初始化膜电位
-        if self.v is None:
-            self.v = torch.zeros_like(x)
+        # 预分配膜电位：batch 维度需要匹配，bits 维度预分配到 max_param_shape
+        max_bits = self.max_param_shape[-1]
+        if self.v is None or self.v.shape[:-1] != batch_shape:
+            self.v = torch.zeros(*batch_shape, max_bits, device=x.device, dtype=x.dtype)
+
+        # 切片到当前 bits
+        v = self.v[..., :input_bits]
 
         # LIF 动力学: V = beta * V + I
-        self.v.mul_(beta).add_(x)
+        v.mul_(beta).add_(x)
 
         # 发放判断
-        spike = (self.v >= threshold).float()
+        spike = (v >= threshold).float()
 
         # 复位
         if self.v_reset is None:
             # 软复位: V = V - spike × V_th
-            self.v.sub_(spike * threshold)
+            v.sub_(spike * threshold)
         else:
             # 硬复位
-            reset_val = torch.full_like(self.v, self.v_reset)
-            self.v.copy_(torch.where(spike > 0, reset_val, self.v))
+            reset_val = torch.full_like(v, self.v_reset)
+            v.copy_(torch.where(spike > 0, reset_val, v))
 
         return spike
 

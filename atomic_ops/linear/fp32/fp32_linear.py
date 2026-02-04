@@ -199,14 +199,20 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
         from atomic_ops.encoding.converters import float32_to_pulse
         assert weight_float.shape == (self.out_features, self.in_features)
 
-        weight_pulse = float32_to_pulse(weight_float, device=weight_float.device)
-
         if TrainingMode.is_ste(self.training_mode):
-            # 训练模式：更新 Parameter (保持 float)
+            # 训练模式：在 Parameter 所在设备上编码
+            device = self._weight_pulse_float.device
+            weight_pulse = float32_to_pulse(weight_float, device=device)
             with torch.no_grad():
                 self._weight_pulse_float.copy_(weight_pulse)
         else:
-            # 推理模式：存储为 bool (4x 内存节省)
+            # 推理模式：从已有 buffer 推断设备
+            device = weight_float.device
+            for buf in self.buffers():
+                if buf is not None:
+                    device = buf.device
+                    break
+            weight_pulse = float32_to_pulse(weight_float, device=device)
             self._weight_pulse_bool = (weight_pulse > 0.5).bool()
 
     def set_weight_pulse(self, weight_pulse):
