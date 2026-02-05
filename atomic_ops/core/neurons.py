@@ -106,15 +106,26 @@ class SimpleIFNode(nn.Module):
             self.register_buffer('_v_threshold', threshold_tensor)
         self._threshold_initialized = True
 
-        # 预分配膜电位 v（作为 buffer，随 .to(device) 移动）
-        self.register_buffer('v', torch.zeros(shape, dtype=torch.float32))
+        # 膜电位 v 需要匹配动态 batch 维度，无法预分配固定形状
+        # 但需要追踪设备，用 _v_threshold 的设备作为参考
+        self.v = None
 
     def forward(self, x):
         # 预分配模式：参数已在 __init__ 中创建，根据输入位宽切片
         input_bits = x.shape[-1] if x.dim() > 0 else 1
+        batch_shape = x.shape[:-1]
+        # 从预分配的 buffer 切片（设备已通过 .to() 正确设置）
         threshold = self._v_threshold[..., :input_bits]
 
-        # 切片到当前 bits（v 已在 __init__ 中预分配，随 .to() 移动到正确设备）
+        # 膜电位：batch 维度动态，bits 维度预分配切片
+        # 使用 _v_threshold 的设备确保一致性
+        max_bits = self.max_param_shape[-1]
+        if self.v is None or self.v.shape[:-1] != batch_shape:
+            self.v = torch.zeros(*batch_shape, max_bits,
+                                 device=self._v_threshold.device,
+                                 dtype=x.dtype)
+
+        # 切片到当前 bits
         v = self.v[..., :input_bits]
 
         # 膜电位积累 (就地操作避免内存分配)
@@ -135,16 +146,16 @@ class SimpleIFNode(nn.Module):
         return spike
 
     def reset_state(self):
-        """重置膜电位，保留预分配张量（清零）"""
-        self.v.zero_()
+        """重置膜电位"""
+        self.v = None
 
     def reset(self):
-        """重置膜电位，保留预分配参数（清零）"""
-        self.v.zero_()
+        """重置膜电位，保留预分配参数"""
+        self.v = None
 
     def _reset(self):
         """内部reset方法 - 由父组件调用"""
-        self.v.zero_()
+        self.v = None
 
     # 兼容接口
     def neuronal_charge(self, x):
@@ -283,18 +294,25 @@ class SimpleLIFNode(nn.Module):
         else:
             self.register_buffer('_v_threshold', threshold_tensor)
 
-        # 预分配膜电位 v（作为 buffer，随 .to(device) 移动）
-        v_tensor = torch.zeros(shape, dtype=torch.float32)
-        if device is not None:
-            v_tensor = v_tensor.to(device)
-        self.register_buffer('v', v_tensor)
+        # 膜电位 v 需要匹配动态 batch 维度，无法预分配固定形状
+        # 用 _v_threshold 的设备作为参考
+        self.v = None
 
     def forward(self, x):
         # 预分配模式：参数已在 __init__ 中创建，根据输入位宽切片
         input_bits = x.shape[-1] if x.dim() > 0 else 1
-        # 直接切片，v 已在 __init__ 中预分配，随 .to() 移动到正确设备
+        batch_shape = x.shape[:-1]
+        # 从预分配的 buffer 切片（设备已通过 .to() 正确设置）
         beta = self._beta[..., :input_bits]
         threshold = self._v_threshold[..., :input_bits]
+
+        # 膜电位：batch 维度动态，bits 维度预分配切片
+        # 使用 _v_threshold 的设备确保一致性
+        max_bits = self.max_param_shape[-1]
+        if self.v is None or self.v.shape[:-1] != batch_shape:
+            self.v = torch.zeros(*batch_shape, max_bits,
+                                 device=self._v_threshold.device,
+                                 dtype=x.dtype)
 
         # 切片到当前 bits
         v = self.v[..., :input_bits]
@@ -317,16 +335,16 @@ class SimpleLIFNode(nn.Module):
         return spike
 
     def reset_state(self):
-        """重置膜电位，保留预分配张量（清零）"""
-        self.v.zero_()
+        """重置膜电位"""
+        self.v = None
 
     def reset(self):
-        """重置膜电位，保留预分配参数（清零）"""
-        self.v.zero_()
+        """重置膜电位，保留预分配参数"""
+        self.v = None
 
     def _reset(self):
         """内部reset方法 - 由父组件调用"""
-        self.v.zero_()
+        self.v = None
 
 
 class DynamicThresholdIFNode(nn.Module):
