@@ -1,0 +1,101 @@
+\section{Methodology: Bit-Exact Spiking Computation via Neuromorphic Gate Circuits}
+\label{sec:methodology}
+
+We aim to answer a fundamental question: is it possible to implement ANN computations \emph{exactly} using spiking neural networks, achieving bit-level equivalence rather than approximation? We propose a radically different approach: instead of approximating continuous values with spike rates or timing, we implement \textbf{all arithmetic operations through pure IF neuron-based logic gates}, achieving \textbf{zero computational error} (only unavoidable machine-precision fluctuations).
+
+As illustrated in Figure~\ref{fig:architecture}, our framework employs a \textbf{hierarchical architecture} for the forward pass: from basic IF neuron logic gates (Level 1-2), through IEEE-754 compliant FP32 arithmetic circuits (Level 3), to complete nonlinear functions (Level 4). This bottom-up construction ensures \textbf{bit-exact} computation throughout. For the backward pass, since forward computation is mathematically equivalent to ANN, the Straight-Through Estimator (STE) becomes an \textbf{exact identity mapping} rather than a heuristic approximation, enabling \textbf{surrogate-free training}.
+
+\subsection{Spatial Bit Encoding}
+\label{subsec:spatial_encoding}
+
+Unlike traditional temporal encoding schemes (rate coding, TTFS) that approximate continuous values through spike statistics, we propose \textbf{Spatial Bit Encoding}---a direct bit-level mapping between IEEE-754 floating-point representations and parallel spike channels that achieves \textbf{zero encoding error} by construction.
+
+\paragraph{Core Principle.} For an FP32 value $x$, we perform bit reinterpretation:
+\begin{align}
+\label{eq:bit_reinterpret}
+b &= \mathcal{R}_{32}(x), \nonumber \\
+S_i &= (b \gg (31-i)) \land 1, \quad i = 0, \ldots, 31
+\end{align}
+where $\mathcal{R}_{32}(\cdot)$ denotes IEEE-754 bit reinterpretation to int32, and $S_i \in \{0, 1\}$ is the spike on channel $i$ (MSB-first ordering). The 32-bit IEEE-754 pattern maps directly to 32 parallel spike channels. This encoding is \textbf{lossless} (every bit preserved exactly, see proof in Appendix~\ref{app:encoding_proof}), \textbf{bidirectional} (decoding via $x = \mathcal{R}_{32}^{-1}(b)$), and \textbf{spatial} (all 32 bits represented simultaneously across channels, not sequentially over time).
+
+\paragraph{Multi-Precision Support.} The same principle extends to FP8 (8 channels), FP16 (16 channels), and FP64 (64 channels). Our implementation pre-allocates neuron parameters for 64 bits and dynamically slices based on input precision, avoiding memory fragmentation.
+
+In summary, Spatial Bit Encoding achieves \textbf{zero encoding error} by construction through direct bit-level mapping. With lossless encoding established, the next challenge is performing arithmetic operations on these spike representations while maintaining bit-exact precision.
+
+\subsection{Neuromorphic Gate Circuits}
+\label{subsec:gate_circuits}
+
+We implement \textbf{all arithmetic operations through pure IF neuron-based logic gates}, constructing \textbf{exact IEEE-754 compliant arithmetic circuits} using only IF neurons with carefully chosen thresholds. Both linear operations (matrix multiplication, addition) and nonlinear functions (exp, sigmoid, GELU, Softmax, RMSNorm) are computed with \textbf{bit-exact precision}.
+
+\paragraph{IF Neuron Model.} Our framework uses the Integrate-and-Fire (IF) neuron, a special case of the Generalized Leaky Integrate-and-Fire (GLIF) model with decay factor $\beta = 1$:
+\begin{align}
+\label{eq:if_neuron}
+V(t+1) &= V(t) + I(t), \nonumber \\
+S(t) &= \mathbf{1}[V(t) > \theta], \nonumber \\
+V(t) &\leftarrow V(t) - S(t) \cdot \theta \quad (\text{soft reset})
+\end{align}
+where $V(t)$ is the membrane potential, $I(t)$ is the input current, $\theta$ is the firing threshold, and $S(t) \in \{0,1\}$ is the spike output. The \textbf{soft reset} (subtracting $\theta$ rather than resetting to zero) is essential: it preserves residual membrane potential, maintaining the toroidal phase space topology required for bit-exact digital logic.
+
+\paragraph{Inherent Immunity to Leakage.} A critical advantage of spatial bit encoding is that each bit is processed in a \textbf{single timestep}---the IF neuron receives input, compares against threshold, and produces output within one step. Even if the neuron exhibits leakage ($\beta < 1$, as in physical LIF hardware where $V(t+1) = \beta V(t) + I(t)$), the membrane potential decay has no time to accumulate: after soft reset, the residual is zero or near-zero, and the next input is evaluated independently. Formally, for any $\beta > 0$, if $I(t) > \theta$ then the neuron fires regardless of $\beta$; if $I(t) \leq \theta$ it does not fire. The gate output is \textbf{independent of $\beta$}. This renders our gate circuits inherently immune to membrane potential leakage, in stark contrast to temporal encoding schemes (rate coding, TTFS) where $\beta < 1$ causes exponential information decay across the multi-step accumulation window. Empirical validation across $\beta \in [0.1, 1.0]$ is presented in \S\ref{subsec:robustness}.
+
+\paragraph{IF Neuron as Universal Logic Primitive.} The key insight is that a single IF neuron can implement any basic logic gate through threshold selection:
+\begin{align}
+\label{eq:if_gates}
+\text{AND}(a,b) &= \text{IF}_{1.5}(a+b), \quad \text{OR}(a,b) = \text{IF}_{0.5}(a+b), \nonumber \\
+\text{NOT}(x) &= \text{IF}_{1.0}(1.5-x)
+\end{align}
+where $\text{IF}_\theta(V) = \mathbf{1}[V > \theta]$ is the IF neuron with threshold $\theta$. The AND gate fires only when both inputs are 1 (sum=2 $>$ 1.5); the OR gate fires when at least one input is 1 (sum$\geq$1 $>$ 0.5); the NOT gate uses a bias of 1.5 with inhibitory weight $-1$: when $x=0$, input $1.5 > 1.0$ fires; when $x=1$, input $0.5 \leq 1.0$ does not fire. From these primitives, we construct composite gates:
+\begin{align}
+\label{eq:composite_gates}
+\text{XOR}(a,b) &= (a \land \lnot b) \lor (\lnot a \land b) \nonumber \\
+\text{MUX}(s,a,b) &= (s \land a) \lor (\lnot s \land b)
+\end{align}
+XOR requires 5 IF neurons (2 NOT + 2 AND + 1 OR); MUX also requires 5 neurons.
+
+
+
+
+\paragraph{Hierarchical Circuit Construction.} Building upon these primitives, we construct arithmetic circuits in a bottom-up hierarchy:
+
+\textbf{Level 1 - Bit-level Adders:} A full adder computes sum and carry from three bits:
+\begin{equation}
+\label{eq:full_adder}
+S = a \oplus b \oplus c_{\text{in}}, \quad C_{\text{out}} = (a \land b) \lor ((a \oplus b) \land c_{\text{in}})
+\end{equation}
+where $\oplus$ denotes XOR and $\land, \lor$ denote AND, OR respectively. Each operation is implemented by the corresponding IF neuron gate.
+
+\textbf{Level 2 - Multi-bit Integer Arithmetic:} An $N$-bit ripple-carry adder chains $N$ full adders. For FP32, we use 28-bit internal precision (1 hidden + 23 mantissa + 4 guard bits) to handle alignment and rounding. The propagate-generate form enables partial parallelization:
+\begin{equation}
+\label{eq:pg_form}
+P_i = A_i \oplus B_i, \quad G_i = A_i \land B_i, \quad C_{i+1} = G_i \lor (P_i \land C_i)
+\end{equation}
+
+\textbf{Level 3 - IEEE-754 Floating-Point Operations:} The FP32 adder implements the complete IEEE-754 pipeline: (1) exponent comparison and swap to identify the larger operand; (2) mantissa alignment via barrel shifter; (3) mantissa addition/subtraction based on sign; (4) normalization via leading-zero detection and left shift; (5) rounding with guard/round/sticky bits. Each sub-component (comparators, shifters, adders) is built entirely from IF neuron gates. Complete circuit specifications for addition, multiplication, division, and square root are provided in Appendix~\ref{app:fp32_circuits}.
+
+\textbf{Level 4 - Nonlinear Functions:} Complex functions like exp, sigmoid, GELU, Softmax, and RMSNorm are decomposed into sequences of FP32 arithmetic operations. For example, $\text{sigmoid}(x) = 1/(1+\exp(-x))$ uses the FP32 exponential (via polynomial approximation with FP32 multiply-add), FP32 addition, and FP32 division circuits. Critically, \emph{every intermediate result maintains full IEEE-754 precision}---there is no accumulation of approximation errors across operations. Detailed decompositions for all activation and normalization functions are given in Appendix~\ref{app:fp32_circuits}.
+
+\paragraph{Unified Architecture for Linear and Nonlinear Operations.} A key advantage of our gate-circuit approach is \textbf{architectural unification}: both linear operations (matrix multiplication implemented as repeated FP32 multiply-add) and nonlinear operations (activation functions, normalization layers) use \emph{the same} underlying gate primitives. This eliminates the need for specialized ``spike-friendly'' substitutes or heterogeneous module designs. The entire forward pass operates purely in the spiking domain with IEEE-754 compliant arithmetic.
+
+\paragraph{Vectorization for Efficiency.} To enable practical deployment, we implement \textbf{batch-vectorized gate circuits}. Each gate instance (VecAND, VecOR, VecXOR, etc.) processes arbitrary tensor shapes in parallel, with bit-parallel operations for independent computations and sequential processing only where data dependencies require it (e.g., carry propagation). This design achieves computational efficiency while maintaining bit-exact correctness. Implementation details and neuron parameter specifications are provided in Appendix~\ref{app:gate_circuit_details}.
+
+In summary, our neuromorphic gate circuit framework achieves \textbf{exact IEEE-754 arithmetic} using only IF neurons, maintaining perfect numerical fidelity throughout the entire computational graph. The only deviations are the unavoidable machine-precision fluctuations inherent to IEEE-754 floating-point arithmetic itself. With both encoding and computation being bit-exact, training the network becomes straightforward.
+
+\subsection{Surrogate-Free Training via STE}
+\label{subsec:ste}
+
+With \textbf{bit-exact forward propagation} established by spatial encoding and neuromorphic gate circuits, training becomes remarkably straightforward. Since our SNN forward pass produces \emph{identical} outputs to the corresponding ANN (up to IEEE-754 machine precision), the Straight-Through Estimator (STE) is no longer a heuristic approximation but a \textbf{mathematically exact identity mapping}.
+
+During the forward pass, the network operates entirely in the spiking domain using our gate-circuit arithmetic. For backpropagation, we employ the standard \textbf{Straight-Through Estimator (STE)}, treating the spike encoding/decoding as an identity function for gradient computation:
+\begin{equation}
+\label{eq:ste_grad}
+\frac{\partial \mathcal{L}}{\partial x} = \frac{\partial \mathcal{L}}{\partial S} \cdot \frac{\partial S}{\partial x} \approx \frac{\partial \mathcal{L}}{\partial S} \cdot 1 = \frac{\partial \mathcal{L}}{\partial S}
+\end{equation}
+where $S$ represents the spatially-encoded spike tensor and $x$ is the original floating-point value.
+
+\paragraph{Why STE is Exact in Our Framework.} Consider the computational graph: let $y = f(g(x))$ denote the SNN forward pass, where $g(\cdot)$ represents spatial bit encoding and $f(\cdot)$ represents the gate-circuit computation. The corresponding ANN computes $y = f(x)$ directly. Since our spatial encoding is a \emph{lossless bijection} (Equation~\ref{eq:bit_reinterpret}) and our gate circuits implement \emph{exact IEEE-754 arithmetic}, we have $f(g(x)) = f(x)$ \textbf{exactly}---not approximately. Therefore, setting $\frac{\partial g}{\partial x} = 1$ is not an approximation but reflects true mathematical equivalence.
+
+Our framework requires \textbf{no surrogate function}---we use only the identity gradient, which correctly captures the bijective mapping. The STE identity assumption holds exactly because the forward computation is exact.
+
+\paragraph{Training Stability.} The bit-exact forward pass provides unprecedented training stability. Since there is no error accumulation across layers or time steps, gradients remain well-behaved throughout deep networks. Our experiments demonstrate stable convergence on models as large as Qwen3-0.6B without the gradient explosion or vanishing issues that plague approximate SNN methods. The training process follows standard Quantization-Aware Training (QAT) theory, with the key difference that our ``quantization'' (spatial bit encoding) introduces \emph{zero} quantization error.
+
+In summary, our hierarchical gate-circuit architecture (Figure~\ref{fig:architecture}) achieves \textbf{bit-exact SNN computation}: the forward pass constructs exact IEEE-754 arithmetic from IF neuron primitives, while the backward pass leverages STE as an exact identity mapping for surrogate-free training. This enables SNNs to produce \emph{identical} outputs to ANNs while inheriting all energy efficiency benefits of event-driven neuromorphic computing.

@@ -1,0 +1,120 @@
+\section{Methodology: A Framework for Precise Spiking Computation}
+\label{sec:methodology}
+
+To address the problems commonly found in existing large-scale SNNs—such as high latency and entropy loss caused by rate/long-window encoding, lack of controllable implementations of nonlinearities in the spiking domain, instability introduced by reliance on soft substitutes and multi-stage training processes, and errors that cannot be confined but instead diffuse along temporal and depth dimensions—leading to difficulty in simultaneously maintaining structural consistency and accuracy preservation under short timesteps and ultra-large scales, we construct a high-fidelity structural mapping mechanism from ANNs to SNNs, enabling the model to maintain accuracy consistency, error controllability, and trainability as it scales up, while confining errors to predictable single-point regions within the network structure.
+
+First, we propose the deterministic Bit Spike Encoding (BSE), which maps numerical activations within a fixed time window into sparse and ordered spike sequences, achieving high-density and reversible expression from the numerical domain to the spike domain. Second, we introduce a pluggable Adaptive Spiking Neural Codec (ASNC) at nonlinear points, using a piecewise adaptive strategy to approximate common activations in the spike domain while maintaining consistency of the BSE code pattern in the output. This inevitably introduces approximation errors, but confines the errors to a single module, preventing diffusion along the temporal dimension and the depth dimension. Finally, on the basis of a forward path almost equivalent to that of ANNs, we implement stable backpropagation using only lightweight STE: at this point, STE is no longer a rough substitute but a gradient approximation based on functional consistency.
+
+\subsection{First step: Bit Spike Encoding (BSE)}
+\label{subsec:bse}
+
+Although traditional rate coding is easy to use, it suffers from low information density, poor expressive efficiency, high latency, and lacks deterministic expressive capability. To establish a stable, equivalent, and tunable spiking representation, we propose BSE encoding, whose significance lies not only in replacing the encoding form but also in endowing the network with a completely new spiking expression language. Traditional neurons represent states through activation values, whereas our BSE transforms them into sparse and ordered spike sequences in the time domain, compressing expression within a fixed time window, thereby reconstructing information density from the numerical space to the spiking space.
+
+BSE relies on an Integrate-and-Fire (IF) neuron with soft reset and a dynamic threshold. Let the input tensor be $I_{\mathrm{in}}(t)\in\mathbb{R}^{B\times d}$, the membrane potential $V_m(t)\in\mathbb{R}^{B\times d}$, the spike output $S_{\mathrm{actual}}(t)\in\{0,1\}^{B\times d}$, and the threshold schedule $\Theta(t)\in\mathbb{R}_{>0}$ (broadcast to $B\times d$). The forward pass is:
+\begin{equation}
+\begin{aligned}
+V_m(t) &= \sum_{\tau<t} I_{\mathrm{in}}(\tau)\;-\;\sum_{\tau<t} S_{\mathrm{actual}}(\tau)\, \Theta(\tau),\\
+M_t &= \big(V_m(t) + I_{\mathrm{in}}(t) \ge \Theta(t)\big)\ \in\ \{0,1\}^{B\times d},\\
+S_{\mathrm{actual}}(t) &= M_t,\\
+V_m(t{+}1) &= V_m(t)\;+\;I_{\mathrm{in}}(t)\;-\;M_t \odot \Theta(t).
+\end{aligned}
+\label{eq:if_forward_clean}
+\end{equation}
+
+Then we define the Soma compartment, whose body consists of a current-accumulation cavity ($\mathcal{A}$) and a time-domain synaptic strength matrix ($\mathcal{G}$), where the time-domain synaptic strength matrix ($\mathcal{G}$) is defined as:
+\begin{equation}
+\begin{aligned}
+& W\in\mathbb{R}^{d_{\mathrm{out}}\times d_{\mathrm{in}}},\quad N\in\mathbb{N},\quad W_{\mathrm{bit}}(t)\in\mathbb{R}_{>0},\\
+& \mathcal{G}\in\mathbb{R}^{N\times d_{\mathrm{out}}\times d_{\mathrm{in}}},\qquad
+\mathcal{G}[t,o,i]=W[o,i]\;W_{\mathrm{bit}}(t),\\
+& t=0,\dots,N-1,\ \ o=1,\dots,d_{\mathrm{out}},\ \ i=1,\dots,d_{\mathrm{in}}.
+\end{aligned}
+\label{eq:time_synaptic_matrix_final_en}
+\end{equation}
+where $W$ is the linear weight matrix, $N$ is the bit-window length, and $W_{\mathrm{bit}}(t)$ is the bit-weight (dynamic-threshold) schedule. The input to Soma is the upstream triplet of spikes ($S_a\in\{0,1\}^{N\times B\times d_{\mathrm{in}}}$, with $S_a(t)\in\{0,1\}^{B\times d_{\mathrm{in}}}$), offset ($\mu_a\in\mathbb{R}^{d_{\mathrm{in}}}$), and scaling factor ($\lambda_a\in\mathbb{R}^{d_{\mathrm{in}}}_{>0}$); let $\beta\in\mathbb{R}^{d_{\mathrm{out}}}$ denote the bias vector. Its forward pass is:
+\begin{equation}
+\begin{aligned}
+\Lambda_a &= \mathrm{diag}(\lambda_a),\\
+Q_a &= \sum_{t=0}^{N-1} S_a(t)\, W_{\mathrm{bit}}(t)\ \in\ \{0,\dots,2^N\!-\!1\}^{B\times d_{\mathrm{in}}},\\
+\mathcal{A}\equiv A &= Q_a\, W^{\top}\ \in\ \mathbb{R}^{B\times d_{\mathrm{out}}},\\
+Y[b,o] &= \big(Q_a\,\Lambda_a^{-1} W^{\top}\big)[b,o] \;-\; (W\mu_a)[o] \;+\; \beta[o],\\
+m_{\mathrm{out}}[o] &= \min_{1\le b\le B} Y[b,o],\qquad
+\mu_{\mathrm{out}}[o] = -\,m_{\mathrm{out}}[o],\\
+R_{\mathrm{out}}[o] &= \max_{1\le b\le B}\big(Y[b,o]+\mu_{\mathrm{out}}[o]\big) + \varepsilon,\qquad
+\lambda_{\mathrm{out}}[o] = \frac{2^N-1}{R_{\mathrm{out}}[o]},\\
+Q_y[b,o] &= \operatorname{clip}_{[0,\,2^N-1]}\!\Big(\mathrm{round}\big(\lambda_{\mathrm{out}}[o]\,(Y[b,o]+\mu_{\mathrm{out}}[o])\big)\Big).
+\end{aligned}
+\label{eq:soma_forward_compact_merged_clean}
+\end{equation}
+where $\{Q_y,\ \lambda_{\mathrm{out}},\ \mu_{\mathrm{out}}\}$ are the outputs of Soma. Within one $N$-step bit window, spikes $S_a(t)$ are collapsed into integer codes $Q_a$ using $W_{\mathrm{bit}}(t)$ (pure spike-domain accumulation). The time-domain synaptic strength $\mathcal{G}$ implies $A=Q_a W^{\top}$, i.e., each output channel sums the pre-accumulated integer codes through fixed linear weights. Real values are obtained by de-scaling and de-biasing: $Y=Q_a\Lambda_a^{-1}W^{\top}-(W\mu_a)+\beta$. Per output channel, $Y$ is shifted to nonnegative to define $\mu_{\mathrm{out}}$, then its post-shift range sets $\lambda_{\mathrm{out}}=(2^N-1)/R_{\mathrm{out}}$. Finally, $Y$ is quantized under $(\lambda_{\mathrm{out}},\mu_{\mathrm{out}})$ to the integer current $Q_y$; spike-domain accumulations remain exact, and the only approximation is rounding/clipping at the last step.
+
+Based on the Soma and the IF neuron, the single-layer BSE pipeline is as follows. The input is $\{\{S_a(t)\}_{t=0}^{N-1},\,\lambda_a,\,\mu_a\}$; the input is transformed by the Soma into an integer current, fed into the IF neuron and converted into a time-domain spike matrix of length $N$, and together with the Soma outputs $\lambda_{\mathrm{out}}$ and $\mu_{\mathrm{out}}$ forms the triplet $\{\{S_y(t)\}_{t=0}^{N-1},\,\lambda_{\mathrm{out}},\,\mu_{\mathrm{out}}\}$. The single-layer BSE encoding is defined by:
+\begin{equation}
+\label{eq:bse_single_layer_def}
+\begin{aligned}
+(Q_y,\lambda_{\mathrm{out}},\mu_{\mathrm{out}}) &= \mathrm{Soma}\big(\{S_a(t)\}_{t=0}^{N-1};\, W,\,\lambda_a,\,\mu_a,\,W_{\mathrm{bit}},\,\beta\big),\\
+\Theta(t) &= W_{\mathrm{bit}}(t),\\
+V_m^{(y)}(0) &= \mathbf{0},\qquad I_{\mathrm{in}}^{(y)}(t)=\delta_{t0}\,Q_y,\\
+M_t^{(y)} &= \big(V_m^{(y)}(t)+I_{\mathrm{in}}^{(y)}(t)\ge \Theta(t)\big),\\
+S_y(t) &= M_t^{(y)},\\
+V_m^{(y)}(t{+}1) &= V_m^{(y)}(t)+I_{\mathrm{in}}^{(y)}(t)-M_t^{(y)}\odot \Theta(t).
+\end{aligned}
+\end{equation}
+
+For other computations operating on the network’s activation hierarchy—activation–activation multiplications such as the \textit{Query–Key (QK)} matrix multiplication in self-attention—we adopt a “decode–compute–re-encode” strategy. This is a deliberate design choice, not a compromise. First, the two incoming BSE spike trains are losslessly decoded back to their corresponding numerical values. Then, the multiplication is performed using standard ANN multiply–accumulate (MAC) operations. Finally, in a crucial last step, the resulting numerical value is immediately re-encoded by a BSE encoder into a new, high-fidelity spike train. This strategy guarantees that such activation-level computations are mathematically equivalent to those in a quantized ANN, thus eliminating by design one of the primary sources of error in traditional A2S methods. By contrast, weight–activation multiplications (e.g., linear projections) can be directly supported in the BSE domain without this mechanism.
+
+Experiments\label{subsec:ablation_studies} show that when the BSE time window length equals the bit width of the original floating-point or fixed-point representation, for example FP16 with 16 bits, BSE encoding does not introduce error that diffuses through the network. We also provide a mathematical analysis in the appendix proving that under this setting BSE is entropy-preserving. Hence ANN activations can be rendered as sparse and ordered spike trains in the time domain within a fixed window, achieving a reconstruction of information density from the numeric domain to the spiking domain. See Appendix~\ref{app:bse_entropy_proof} for the full proof.
+
+
+\subsection{Second step: Adaptive Spiking Neural Codec (ASNC)}
+\label{subsec:asnc}
+
+Constructing nonlinear transformations in the spiking domain is highly challenging. Most existing methods rely on lengthy time-window approximations or complex neural transformations, which not only make errors uncontrollable but also lack structural generalization capability. To address this, we propose a pluggable structural approximator, ASNC, which employs a piecewise adaptive strategy to fit nonlinear curves, fixing nonlinear errors within decoupled units while ensuring that outputs remain in BSE encoding format, thereby enabling end-to-end inference in the spiking space.
+\paragraph{Design as a Structural Approximator.}
+ASNC acts as a modular \emph{structural approximator}: it partitions the input domain into adaptively refined segments and fits the target nonlinearity with compact spiking codecs at the segment level. For each active segment, the decoded analog estimate is immediately re-encoded by the BSE encoder within the same fixed window, so that \emph{all} intermediate tensors remain in BSE format. This localizes approximation error to the ASNC unit and preserves end-to-end inference in the spiking space. Formal training-time details and hyperparameters appear in Appendix~\ref{app:asnc_details}.
+
+\paragraph{Core Objective (Principle).}
+For segment $i$, a lightweight spiking codec realizes the segment-wise mapping:
+\begin{align}
+\text{spikes}_i(t) &= \mathrm{LIF}\!\big(\mathrm{quantize}(x\, s_i + b_i),\, \theta_i(t)\big), \\
+\mathcal{C}_i(x) &= \sum_{t=1}^{T} w_i(t)\, \text{spikes}_i(t),
+\end{align}
+where $s_i,b_i$ are segment-specific affine parameters and $w_i(t)$ are trainable decoding weights.
+
+\paragraph{BSE-Compatible Output (Principle).}
+Segment outputs are kept in BSE form via immediate re-encoding:
+\begin{equation}
+S^{\mathrm{BSE}}(t) \;=\; \sum_{i=1}^{N} \mathcal{I}_i(x)\, S^{\mathrm{BSE}}_i(t),
+\end{equation}
+where $\mathcal{I}_i(x)$ selects the active segment(s) and $S^{\mathrm{BSE}}_i(t)$ is the BSE spike train for segment $i$ within the same fixed window $T$.
+
+\paragraph{Adaptive Splitting (Principle).}
+To maintain approximation fidelity with minimal complexity, a segment $i$ is split when its normalized difficulty surpasses an adaptive threshold:
+\begin{equation}
+\frac{L_i}{\bar{L}} \cdot \big(1 + \sigma_i^2\big) \cdot \rho_i \;>\; \tau_{\mathrm{adaptive}},
+\end{equation}
+where $L_i$ is the segment loss, $\bar{L}$ the global average loss, $\sigma_i^2$ the loss variance, and $\rho_i$ the activation proportion. The threshold $\tau_{\mathrm{adaptive}}$ incorporates training-stage corrections (Appendix~\ref{app:asnc_details}).
+
+\paragraph{Split Point Selection (Principle).}
+Given a candidate split $x_s$, the selection maximizes a multi-criteria score:
+\begin{align}
+S(x_s) \;=\; \alpha_1\, E_{\mathrm{sep}}(x_s) \;+\; \alpha_2\, C_{\mathrm{cons}}(x_s)
+\;+\; \alpha_3\, B_{\mathrm{bal}}(x_s) \;+\; \alpha_4\, Y_{\mathrm{sep}}(x_s),
+\end{align}
+balancing error separation, internal consistency, data balance, and target separation.
+
+\paragraph{Morphology-Aware Weighting (Principle).}
+Segment-wise loss contributions are weighted by functional importance, error profile, and data density:
+\begin{equation}
+w_i \;=\; 0.5\, I_{\mathrm{func}}(i) \;+\; 0.35\, I_{\mathrm{error}}(i) \;+\; 0.15\, D_i,
+\end{equation}
+with feature definitions (e.g., $S_{\mathrm{mag}}$, $R_{\mathrm{region}}$, $G_{\mathrm{grad}}$, $E_{\mathrm{rel}}$, $E_{\mathrm{abs}}$, $\sigma_{\mathrm{loss}}$) specified in Appendix~\ref{app:asnc_details}.
+
+\subsection{Third step: STE Training}
+\label{subsec:ste}
+
+The training of SNNs is usually constrained by the problems of non-differentiable gradients and discontinuous information. Although some multi-stage training frameworks have been proposed, most require special structures and introduce training instability. In contrast, our designed forward path already possesses a high degree of consistency, and therefore we can introduce lightweight STE substitutions on this basis to optimize stability.
+
+% 在前向传播中，网络严格按照我们定义的混合策略运行。而在反向传播中，我们构建了一个“代理”计算图。关键在于，我们为BSE编码器（$S_{\text{out}} = \text{EncodeBSE}(V_{\text{in}})$）选择的梯度代理。我们采用了硬直通估计器（Hard STE），将其梯度定义为恒等映射。这个选择之所以是有原则的、而非纯粹的启发式，是因为我们的前向传播已经通过BSE和精确的线性运算保证了极高的数值保真度。SNN的输出与ANN的输出在功能上高度一致——这一假设得到了我们端到端实验的有力经验支持（例如，在Table 4中，即使在70B模型上性能下降也微乎其微）——因此我们可以安全地假设梯度能够直接通过，而无需更复杂的近似函数。这使得训练过程更稳定、更高效，并将我们的训练方法植根于成熟的量化感知训练（QAT）理论之中。
+During the forward pass, the network operates on our defined hybrid strategy. For backpropagation, we construct a surrogate computational graph. The key lies in the gradient proxy chosen for the BSE encoder ($S_{\text{out}} = \text{EncodeBSE}(V_{\text{in}})$). We employ a hard \textbf{Straight-Through Estimator (STE)}, defining its gradient as an identity mapping. This choice is \textbf{principled}, not merely heuristic, because our forward pass has already guaranteed extreme numerical fidelity through BSE and exact linear operations. The SNN's output is functionally consistent with its ANN counterpart—an assumption strongly supported by our end-to-end experiments (e.g., Table~\ref{tab:sota_scaling_performance_steps_nostyle}) where negligible performance degradation was observed even on 70B models. This empirical evidence allows us to safely assume the gradient can pass directly without more complex approximations. This leads to a more stable and efficient training process, grounding our methodology in established Quantization-Aware Training (QAT) theory.
+

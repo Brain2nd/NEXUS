@@ -1,0 +1,165 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{maass1997networks,roy2019towards,davies2018loihi,davies2021loihi}
+\citation{auge2021encoding,guo2021coding,neftci2019surrogate}
+\citation{rueckauer2017conversion}
+\citation{bonilla2022ttfs,stanojevic2024ttfs}
+\citation{zhou2023spikformer,yao2023sdt,spikedattention2024}
+\citation{neftci2019surrogate,shrestha2018slayer,deng2022tet}
+\newlabel{sec:introduction}{{1}{1}{}{section.1}{}}
+\newlabel{sec:introduction@cref}{{[section][1][]1}{[1][1][]1}{}{}{}}
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:bse_comparison}{{1}{1}{\textbf {Comparison of spike encoding schemes.} \textbf {(Left) Traditional Temporal Encoding (e.g., Rate Coding):} Relies on stochastic spike statistics over long time windows (e.g., 1024 time steps) to approximate continuous values, inherently introducing approximation errors with high latency. \textbf {(Right) Spatial Bit Encoding (Ours):} Operates within a fixed short window ($N$ steps, e.g., 32 for FP32). Through \emph {deterministic bit extraction} with dynamic threshold $\Theta (t)$, each IEEE-754 bit is precisely extracted at specific time steps, establishing a \textbf {lossless bijection} between input values and spike sequences with \textbf {zero encoding error}}{figure.caption.1}{}}
+\newlabel{fig:bse_comparison@cref}{{[figure][1][]1}{[1][1][]1}{}{}{}}
+\newlabel{fig:architecture}{{2}{2}{\textbf {Hierarchical architecture of neuromorphic gate circuits with surrogate-free backpropagation.} \textbf {Forward Pass (blue upward path):} Bottom-up construction from IF neurons to complex nonlinear functions. \textit {Level 1-2:} IF neurons implement logic primitives (AND, OR, NOT) and bit-level full adders. \textit {Level 3:} Cascaded construction of IEEE-754 compliant FP32 arithmetic pipelines (adder, multiplier, divider). \textit {Level 4:} Nonlinear functions (Softmax, SiLU, etc.) decomposed into exact FP32 operation sequences, ensuring \textbf {bit-exact} forward computation. \textbf {Backward Pass (red downward path):} Surrogate-free backpropagation mechanism. Since forward computation is mathematically equivalent to ANN (no quantization error), the Straight-Through Estimator (STE) becomes an \textbf {exact identity mapping} ($\frac {\partial S}{\partial x} = 1$) rather than a heuristic approximation. Gradients ($\frac {\partial \mathcal {L}}{\partial S}$) flow directly through bit-exact modules without requiring smooth surrogate functions}{figure.caption.2}{}}
+\newlabel{fig:architecture@cref}{{[figure][2][]2}{[1][1][]2}{}{}{}}
+\citation{rueckauer2017conversion,auge2021encoding,guo2021coding}
+\citation{ZhaoHuangDingYu2025_TTFSFormer}
+\citation{stanojevic2024ttfs}
+\citation{zhou2023spikformer,zhou2024spikformerv2}
+\citation{you2024spikeziptf}
+\citation{zhou2023spikformer}
+\citation{yao2023sdt,spikedattention2024,wang2023stsa}
+\citation{you2024spikeziptf,tang2024sorbet}
+\citation{zhu2023spikegpt}
+\citation{xing2025spikellm}
+\citation{xing2024spikelm}
+\citation{wu2018stbp}
+\citation{shrestha2018slayer}
+\citation{rathi2021dietsnn}
+\citation{rathi2020hybrid}
+\newlabel{tab:bse_fidelity}{{1}{3}{Reconstruction fidelity (MSE; mean $\pm $ std over 10{,}000 random values) with explicit precision and latency cost (Time Steps). BSE attains $10^{11}$–$10^{18}$ lower error than rate coding and TTFS under the same step budgets, reaching near-machine precision at FP32. Notably, TTFS requires as many as 1{,}024 time steps to match the fidelity that BSE already achieves within 16 steps, highlighting the substantially higher latency cost of TTFS}{table.caption.3}{}}
+\newlabel{tab:bse_fidelity@cref}{{[table][1][]1}{[1][1][]3}{}{}{}}
+\newlabel{sec:related_works}{{2}{3}{}{section.2}{}}
+\newlabel{sec:related_works@cref}{{[section][2][]2}{[1][3][]3}{}{}{}}
+\newlabel{sec:methodology}{{3}{4}{}{section.3}{}}
+\newlabel{sec:methodology@cref}{{[section][3][]3}{[1][4][]4}{}{}{}}
+\newlabel{subsec:spatial_encoding}{{3.1}{4}{}{subsection.3.1}{}}
+\newlabel{subsec:spatial_encoding@cref}{{[subsection][1][3]3.1}{[1][4][]4}{}{}{}}
+\newlabel{eq:bit_reinterpret}{{1}{4}{}{equation.1}{}}
+\newlabel{eq:bit_reinterpret@cref}{{[equation][1][]1}{[1][4][]4}{}{}{}}
+\newlabel{subsec:gate_circuits}{{3.2}{4}{}{subsection.3.2}{}}
+\newlabel{subsec:gate_circuits@cref}{{[subsection][2][3]3.2}{[1][4][]4}{}{}{}}
+\newlabel{eq:if_neuron}{{2}{4}{}{equation.2}{}}
+\newlabel{eq:if_neuron@cref}{{[equation][2][]2}{[1][4][]4}{}{}{}}
+\newlabel{eq:if_gates}{{3}{5}{}{equation.3}{}}
+\newlabel{eq:if_gates@cref}{{[equation][3][]3}{[1][5][]5}{}{}{}}
+\newlabel{eq:composite_gates}{{4}{5}{}{equation.4}{}}
+\newlabel{eq:composite_gates@cref}{{[equation][4][]4}{[1][5][]5}{}{}{}}
+\newlabel{eq:full_adder}{{5}{5}{}{equation.5}{}}
+\newlabel{eq:full_adder@cref}{{[equation][5][]5}{[1][5][]5}{}{}{}}
+\newlabel{eq:pg_form}{{6}{5}{}{equation.6}{}}
+\newlabel{eq:pg_form@cref}{{[equation][6][]6}{[1][5][]5}{}{}{}}
+\newlabel{subsec:ste}{{3.3}{5}{}{subsection.3.3}{}}
+\newlabel{subsec:ste@cref}{{[subsection][3][3]3.3}{[1][5][]5}{}{}{}}
+\newlabel{eq:ste_grad}{{7}{6}{}{equation.7}{}}
+\newlabel{eq:ste_grad@cref}{{[equation][7][]7}{[1][5][]6}{}{}{}}
+\newlabel{sec:experiments}{{4}{6}{}{section.4}{}}
+\newlabel{sec:experiments@cref}{{[section][4][]4}{[1][6][]6}{}{}{}}
+\newlabel{subsec:verification_of_components}{{4.1}{6}{}{subsection.4.1}{}}
+\newlabel{subsec:verification_of_components@cref}{{[subsection][1][4]4.1}{[1][6][]6}{}{}{}}
+\newlabel{subsec:ablation_studies}{{4.2}{6}{}{subsection.4.2}{}}
+\newlabel{subsec:ablation_studies@cref}{{[subsection][2][4]4.2}{[1][6][]6}{}{}{}}
+\newlabel{tab:component_mse_ablation}{{2}{7}{Component-level bit-exact precision (ULP metrics). 0-ULP rate indicates perfect bit-level match percentage; Max ULP shows worst-case deviation. Results on FP32 with 1,024 random inputs}{table.caption.4}{}}
+\newlabel{tab:component_mse_ablation@cref}{{[table][2][]2}{[1][7][]7}{}{}{}}
+\newlabel{tab:layerwise_ablation}{{3}{7}{End-to-end bit-exact precision on complete models. All metrics compare SNN outputs against PyTorch FP32. Results show bit-exact behavior propagates through deep networks}{table.caption.5}{}}
+\newlabel{tab:layerwise_ablation@cref}{{[table][3][]3}{[1][7][]7}{}{}{}}
+\newlabel{tab:progressive_ablation}{{4}{7}{Precision scaling with network depth (Qwen3-0.6B). ULP metrics show sublinear error growth, confirming bounded precision through deep networks}{table.caption.6}{}}
+\newlabel{tab:progressive_ablation@cref}{{[table][4][]4}{[1][7][]7}{}{}{}}
+\newlabel{tab:attention_fine_grained}{{5}{7}{Operation-specific precision within transformer blocks. All operations remain within IEEE-754 precision bounds}{table.caption.7}{}}
+\newlabel{tab:attention_fine_grained@cref}{{[table][5][]5}{[1][7][]7}{}{}{}}
+\citation{xing2024spikellm}
+\citation{xing2024spikellm}
+\citation{davies2018loihi}
+\newlabel{tab:ffn_force_break}{{6}{8}{Comparison with approximate SNN encoding methods. Our gate-circuit approach achieves $10^5\times $ better precision than rate coding and TTFS. MSE and ULP measured on FFN block outputs}{table.caption.8}{}}
+\newlabel{tab:ffn_force_break@cref}{{[table][6][]6}{[1][8][]8}{}{}{}}
+\newlabel{tab:spikellm_comparison}{{7}{8}{Comparison with prior SNN methods on LLaMA-2 7B, WikiText-2 (lower PPL is better). Our bit-exact method achieves identical PPL to ANN baseline}{table.caption.9}{}}
+\newlabel{tab:spikellm_comparison@cref}{{[table][7][]7}{[1][8][]8}{}{}{}}
+\newlabel{subsec:performance_and_scalability}{{4.3}{8}{}{subsection.4.3}{}}
+\newlabel{subsec:performance_and_scalability@cref}{{[subsection][3][4]4.3}{[1][8][]8}{}{}{}}
+\newlabel{subsec:hardware_efficiency_analysis}{{4.4}{8}{}{subsection.4.4}{}}
+\newlabel{subsec:hardware_efficiency_analysis@cref}{{[subsection][4][4]4.4}{[1][8][]8}{}{}{}}
+\newlabel{eq:energy_model}{{8}{8}{}{equation.8}{}}
+\newlabel{eq:energy_model@cref}{{[equation][8][]8}{[1][8][]8}{}{}{}}
+\bibdata{example_paper}
+\bibcite{auge2021encoding}{{1}{2021}{{Auge et~al.}}{{Auge, Hille, Mueller, and Knoll}}}
+\newlabel{tab:sota_scaling_performance_steps_nostyle}{{8}{9}{End-to-end task performance (accuracy, \%). SNN outputs are bit-exact, yielding identical accuracy to ANN baselines}{table.caption.10}{}}
+\newlabel{tab:sota_scaling_performance_steps_nostyle@cref}{{[table][8][]8}{[1][8][]9}{}{}{}}
+\newlabel{subsec:robustness}{{4.5}{9}{}{subsection.4.5}{}}
+\newlabel{subsec:robustness@cref}{{[subsection][5][4]4.5}{[1][9][]9}{}{}{}}
+\newlabel{sec:conclusion}{{5}{9}{}{section.5}{}}
+\newlabel{sec:conclusion@cref}{{[section][5][]5}{[1][9][]9}{}{}{}}
+\bibcite{bonilla2022ttfs}{{2}{2022}{{Bonilla et~al.}}{{Bonilla, Gautrais, Thorpe, and Masquelier}}}
+\bibcite{davies2018loihi}{{3}{2018}{{Davies et~al.}}{{Davies, Srinivasa, Lin, Chinya, Cao, Choday, Dimou, Joshi, Imam, Jain, Liao, Lin, Lines, Liu, Mathaikutty, McCoy, Paul, Tse, Venkataramanan, Weng, Wild, Yang, and Wang}}}
+\bibcite{davies2021loihi}{{4}{2021}{{Davies et~al.}}{{Davies, Wild, Orchard, Sandamirskaya, Guerra, Joshi, Plank, and Risbud}}}
+\bibcite{deng2022tet}{{5}{2022}{{Deng et~al.}}{{Deng, Li, Zhang, and Gu}}}
+\bibcite{guo2021coding}{{6}{2021}{{Guo et~al.}}{{Guo, Fouda, Eltawil, and Salama}}}
+\bibcite{spikedattention2024}{{7}{2024}{{Hwang et~al.}}{{Hwang, Lee, Park, Lee, and Kung}}}
+\bibcite{maass1997networks}{{8}{1997}{{Maass}}{{}}}
+\bibcite{neftci2019surrogate}{{9}{2019}{{Neftci et~al.}}{{Neftci, Mostafa, and Zenke}}}
+\bibcite{rathi2021dietsnn}{{10}{2020}{{Rathi \& Roy}}{{Rathi and Roy}}}
+\bibcite{rathi2020hybrid}{{11}{2020}{{Rathi et~al.}}{{Rathi, Srinivasan, Panda, and Roy}}}
+\bibcite{roy2019towards}{{12}{2019}{{Roy et~al.}}{{Roy, Jaiswal, and Panda}}}
+\bibcite{rueckauer2017conversion}{{13}{2017}{{Rueckauer et~al.}}{{Rueckauer, Lungu, Hu, Pfeiffer, and Liu}}}
+\bibcite{shrestha2018slayer}{{14}{2018}{{Shrestha \& Orchard}}{{Shrestha and Orchard}}}
+\bibcite{stanojevic2024ttfs}{{15}{2023}{{Stanojevic et~al.}}{{Stanojevic, Woźniak, Bellec, Cherubini, Pantazi, and Gerstner}}}
+\bibcite{tang2024sorbet}{{16}{2024}{{Tang et~al.}}{{Tang, Yan, and Wong}}}
+\bibcite{wang2023stsa}{{17}{2023}{{Wang et~al.}}{{}}}
+\bibcite{wu2018stbp}{{18}{2018}{{Wu et~al.}}{{Wu, Deng, Li, Zhu, and Shi}}}
+\bibcite{xing2025spikellm}{{19}{2025}{{Xing et~al.}}{{}}}
+\bibcite{xing2024spikelm}{{20}{2024{a}}{{Xing et~al.}}{{Xing, Zhang, Ni, Xiao, Ju, Fan, Wang, Zhang, and Li}}}
+\bibcite{xing2024spikellm}{{21}{2024{b}}{{Xing et~al.}}{{Xing, Zheng, Li, Liu, Yao, Zheng, Liu, Hu, and Xu}}}
+\bibcite{yao2023sdt}{{22}{2023}{{Yao et~al.}}{{Yao, Hu, Zhou, Yuan, Tian, Xu, and Li}}}
+\bibcite{you2024spikeziptf}{{23}{2024}{{You et~al.}}{{You, Xu, Nie, Deng, Guo, Wang, and He}}}
+\bibcite{ZhaoHuangDingYu2025_TTFSFormer}{{24}{2025}{{Zhao et~al.}}{{Zhao, Huang, Ding, and Yu}}}
+\bibcite{zhou2023spikformer}{{25}{2022}{{Zhou et~al.}}{{Zhou, Zhu, He, Wang, Yan, Tian, and Yuan}}}
+\bibcite{zhou2024spikformerv2}{{26}{2024}{{Zhou et~al.}}{{Zhou, Che, Fang, Tian, Zhu, Yan, Tian, and Yuan}}}
+\bibcite{zhu2023spikegpt}{{27}{2024}{{Zhu et~al.}}{{Zhu, Zhao, Li, and Eshraghian}}}
+\bibstyle{icml2026}
+\newlabel{app:encoding_proof}{{A}{12}{}{appendix.A}{}}
+\newlabel{app:encoding_proof@cref}{{[section][1][]A}{[1][12][]12}{}{}{}}
+\newlabel{thm:bijective}{{A.1}{12}{Lossless Bijection}{theorem.A.1}{}}
+\newlabel{thm:bijective@cref}{{[theorem][1][1]A.1}{[1][12][]12}{}{}{}}
+\newlabel{app:gate_circuit_details}{{B}{12}{}{appendix.B}{}}
+\newlabel{app:gate_circuit_details@cref}{{[section][2][]B}{[1][12][]12}{}{}{}}
+\newlabel{app:fp32_circuits}{{C}{13}{}{appendix.C}{}}
+\newlabel{app:fp32_circuits@cref}{{[section][3][]C}{[1][13][]13}{}{}{}}
+\newlabel{tab:neuron_summary}{{9}{15}{IF neuron count per component}{table.caption.12}{}}
+\newlabel{tab:neuron_summary@cref}{{[table][9][]9}{[1][15][]15}{}{}{}}
+\newlabel{app:exp_setup}{{D}{15}{}{appendix.D}{}}
+\newlabel{app:exp_setup@cref}{{[section][4][]D}{[1][15][]15}{}{}{}}
+\citation{davies2018loihi}
+\citation{davies2018loihi}
+\newlabel{app:energy_analysis}{{E}{16}{}{appendix.E}{}}
+\newlabel{app:energy_analysis@cref}{{[section][5][]E}{[1][16][]16}{}{}{}}
+\newlabel{app:robustness}{{F}{16}{}{appendix.F}{}}
+\newlabel{app:robustness@cref}{{[section][6][]F}{[1][16][]16}{}{}{}}
+\newlabel{app:beta_scan}{{F.1}{16}{}{subsection.F.1}{}}
+\newlabel{app:beta_scan@cref}{{[subsection][1][6]F.1}{[1][16][]16}{}{}{}}
+\newlabel{fig:beta_scan}{{3}{16}{LIF decay factor robustness: accuracy vs.\ $\beta $ for logic gates and arithmetic units. All components maintain 100\% accuracy across the entire range, confirming inherent immunity to membrane leakage}{figure.caption.15}{}}
+\newlabel{fig:beta_scan@cref}{{[figure][3][]3}{[1][16][]16}{}{}{}}
+\newlabel{app:noise_scan}{{F.2}{16}{}{subsection.F.2}{}}
+\newlabel{app:noise_scan@cref}{{[subsection][2][6]F.2}{[1][16][]16}{}{}{}}
+\newlabel{tab:hardware_efficiency_full}{{10}{17}{Comprehensive energy comparison between our SNN gate circuits on Loihi~2 and equivalent ANN operations on GPU. \textbf {All energies in nJ (nanojoules)} for direct comparison. Loihi energy calculated using 23.6 pJ/SynOp~\citep {davies2018loihi} with 50\% average spike activity (due to normally-distributed data). GPU energy includes memory access costs which dominate real workloads. Our neuromorphic implementation achieves 27--168,000$\times $ energy reduction while maintaining bit-exact IEEE-754 precision}{table.caption.13}{}}
+\newlabel{tab:hardware_efficiency_full@cref}{{[table][10][]10}{[1][16][]17}{}{}{}}
+\newlabel{app:threshold_var}{{F.3}{17}{}{subsection.F.3}{}}
+\newlabel{app:threshold_var@cref}{{[subsection][3][6]F.3}{[1][16][]17}{}{}{}}
+\newlabel{tab:beta_scan}{{11}{18}{LIF decay factor scan: accuracy (\%) under membrane potential leakage. All components maintain $100.0\%$ accuracy across the full range $\beta \in [0.1, 1.0]$, confirming inherent immunity to leakage}{table.caption.14}{}}
+\newlabel{tab:beta_scan@cref}{{[table][11][]11}{[1][16][]18}{}{}{}}
+\newlabel{tab:noise_gates}{{12}{18}{Logic gate accuracy (\%) under synaptic noise $\sigma $. Gates maintain ${>}98\%$ accuracy at $\sigma \leq 0.2$ with graceful degradation beyond}{table.caption.16}{}}
+\newlabel{tab:noise_gates@cref}{{[table][12][]12}{[1][16][]18}{}{}{}}
+\newlabel{tab:noise_arith}{{13}{18}{Arithmetic unit accuracy (\%) under synaptic noise $\sigma $. Units maintain 100\% at $\sigma \leq 0.1$; faster degradation reflects carry-chain error propagation}{table.caption.17}{}}
+\newlabel{tab:noise_arith@cref}{{[table][13][]13}{[1][16][]18}{}{}{}}
+\newlabel{fig:noise_scan}{{4}{18}{Input noise robustness: (a) logic gates maintain ${>}98\%$ accuracy at $\sigma \leq 0.2$; (b) arithmetic units degrade faster due to carry-chain error propagation}{figure.caption.18}{}}
+\newlabel{fig:noise_scan@cref}{{[figure][4][]4}{[1][16][]18}{}{}{}}
+\newlabel{tab:threshold_var}{{14}{18}{Logic gate accuracy (\%) under threshold variation $\delta $. Gates tolerate $\delta \leq 0.10$ with ${>}96\%$ accuracy}{table.caption.19}{}}
+\newlabel{tab:threshold_var@cref}{{[table][14][]14}{[1][16][]18}{}{}{}}
+\newlabel{app:fp_noise}{{F.4}{18}{}{subsection.F.4}{}}
+\newlabel{app:fp_noise@cref}{{[subsection][4][6]F.4}{[1][17][]18}{}{}{}}
+\newlabel{tab:fp_noise}{{15}{19}{Floating-point operator accuracy (\%) under input noise. Lower-precision formats exhibit greater robustness due to fewer bits susceptible to noise}{table.caption.20}{}}
+\newlabel{tab:fp_noise@cref}{{[table][15][]15}{[1][17][]19}{}{}{}}
+\newlabel{fig:fp_noise}{{5}{19}{Floating-point operator robustness under input noise. Lower-precision formats (FP8) are more robust than higher-precision formats (FP32), as fewer bits are susceptible to noise-induced flips}{figure.caption.21}{}}
+\newlabel{fig:fp_noise@cref}{{[figure][5][]5}{[1][18][]19}{}{}{}}
+\gdef \@abspage@last{19}

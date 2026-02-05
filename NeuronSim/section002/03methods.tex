@@ -1,0 +1,156 @@
+\section{Methodology: A Framework for Precise Spiking Computation}
+\label{sec:methodology}
+
+% 我们的目标是回答一个核心问题：是否有可能从ANNs构建一个高保真度的结构映射机制到SNNs，同时不改变其网络结构，使得随着模型规模的扩大，仍能保持准确性的一致性、误差的可控性和可训练性。为此，我们提出了一种逐步接近理想SNN的方法，其核心目标是线性计算脉冲编码最大限度地保持信息表达的无损性（Bit Spike Encoding）、在非线性环节实现局部化近似而不做结构改变（Adaptive Spiking Neural Codec），以及在此基础上实现可调性和稳定训练（STE）。
+
+
+% We aim to answer a core question: is it possible to construct a high-fidelity structural mapping mechanism from ANNs to SNNs, so that as the model scales up, it can still maintain accuracy consistency, error controllability, and trainability. To this end, we propose a  for gradually approaching an ideal SNN, with the core objective of maximizing the preservation of information expression capability (Bit Spike Encoding), nonlinear modeling capability (Adaptive Spiking Neural Codec), and tunability(Identity-gradient Proxy STE), while controlling errors within predictable single-point regions of the network structure.
+
+% To achieve this goal, our first step is to propose Bit Spike Encoding (BSE), whose significance lies not only in replacing the encoding form but also in endowing the network with a new spiking expression language. Traditional neurons represent states through activation values, while our BSE transforms them into sparse and ordered spike sequences in the time domain, compressing expression within a fixed time window, thereby reconstructing information density from the numerical space to the spiking space. The second step is to introduce Adaptive Spiking Neural Codec (ASNC) to implement nonlinear activation functions. Since activation functions are irreversible and difficult to precisely simulate, we design ASNC as a structural approximator. We use a piecewise adaptive strategy to fit nonlinear curves while ensuring that outputs remain in BSE encoding format, thus enabling end-to-end inference in the spiking space. Although unavoidable approximation errors are introduced here, we strictly confine them within the ASNC single-module, preventing propagation or accumulation within the network and forming a localized mechanism. On the basis of ensuring high fidelity in the forward path, we propose an STE-based approximate training scheme. Unlike previous approaches that introduced approximate non-differentiable methods at multiple structural points, we have already compressed SNN behavior into a form almost equivalent to ANNs in the first two steps, so that backpropagation only needs to approximate gradients within an extremely small error space. At this point, the introduced STE is no longer a rough substitute but a gradient stable backpropagation mechanism supported by functional consistency, thereby achieving both convergence and generalization guarantees~\citep{neftci2019surrogate}. The key of the entire framework lies in that we no longer attempt to make low-fidelity approximations at multiple positions, but instead carefully design the system so that errors are controlled at the only controllable node within the structure, while maintaining the interpretability, tunability, and deployability of the overall system.
+% 我们想尝试回答一个核心问题，是否可以构建一种从ann到snn的高保真结构映射机制，使得在模型大规模化的同时仍能保持精度一致性、误差可控性和训练稳定性。我们提出了一个三步路线图。该路线图旨在通过高保真映射、结构一致性和误差可控性来构建理想的脉冲神经网络（SNN）。为了实现这个目标我们提出了不牺牲效率的脉冲序列与连续值的双向精确映射编码——Bit Spike Encoding实现最大程度保留信息表达；通用结构化逼近器 Adaptive Spiking Neural Codec (ASNC)实现非线性建模，不改变网络结构且局部化误差；在高保真且结构一致的前向传播条件下，引入了恒等梯度代理STE，由于梯度路径与数值路径完全对齐，反向传播不会额外改变计算过程，从而保证了训练的收敛稳定。
+We aim to answer a core question: whether it is possible to construct a high-fidelity structural mapping mechanism from ANNs to SNNs, so that as the model scales up, it can still maintain accuracy consistency, error controllability, and training stability. We propose a three-step roadmap, aiming to construct an ideal SNN through high-fidelity mapping, structural consistency, and error controllability. To achieve this goal, we propose Bit Spike Encoding (BSE), a bidirectional exact mapping between spike sequences and continuous values without sacrificing efficiency, to maximally preserve information expression; a general structural approximator, Adaptive Spiking Neural Codec (ASNC), to realize nonlinear modeling, which requires no structural modifications and localizes errors; and, under high-fidelity and structurally consistent forward propagation, to introduce an identity-gradient proxy (STE). Since the gradient path is fully aligned with the numerical path, backpropagation does not introduce additional modifications to the computation process, thereby ensuring stable convergence of training.
+
+
+\subsection{Bit Spike Encoding (BSE)}
+\label{subsec:bse}
+
+% 我们首先提出无损确定性脉冲编码 Bit Spike Encoding，而不是在既有压缩方案上做降低损失。
+% 传统速率与 TTFS 等 有三点共性瓶颈：信息密度低，精度提升依赖增加时间步导致高延迟与高开销，映射非确定或有损而不可逆。规模增大时，这些近似误差沿深度与时间扩散，可靠性下降。BSE 强调确定性与可逆性，将每个激活在固定短窗内映射为稀疏有序的按位脉冲，每个位在预定义时间步触发一次。由此在 N 步内利用 2^N 表示层级，实现高精度且延迟受常数上界约束。更重要的是，该编码使线性计算与 ANN 严格等价，使误差仅出现在非线性模块并保持结构一致。基于此，训练更稳定，可扩展到大模型。
+% 第一句讲现有方法的问题；第二句引出我们的解决方案，大概的思想是怎么样的。（现象、根本原因、所以我们怎么做 这里一定要是对应的）
+% Bescause of 现有方法均依赖离散脉冲对连续值的 近似 ，现有的编码精度低损失大，不得不用效率换取准确性；Rather than 降低 近似 的损失，我们提出了不牺牲效率的脉冲序列与连续值双向映射对应的脉冲编码 Bit Spike Encoding，使得脉冲序列可以在固定的低时间窗内精确表征连续值，从而消除误差在线性计算中的传播路径。
+% We first propose a lossless and deterministic spiking code, Bit Spike Encoding (BSE), rather than merely reducing the losses of existing compression-based schemes. Rate coding and Time-To-First-Spike coding etc. share three fundamental limitations: low information density; precision gains that rely on more timesteps, resulting in high latency and overhead; and mappings that are non-deterministic or lossy, thus irreversible. At larger scales, these approximation errors diffuse across depth and time, reducing reliability. BSE emphasizes determinism and reversibility, mapping each activation within a fixed short window into a sparse, ordered bitwise spike sequence, where each bit triggers once at a predefined timestep. In this way, BSE exploits all $2^N$ representational levels within $N$ timesteps, attaining high precision while keeping latency bounded by a constant horizon. More importantly, this coding makes linear computations strictly equivalent to those in ANNs, ensuring that approximation errors arise only in nonlinear modules while structural consistency is preserved. Based on this, training becomes more stable and the approach scales to large models.
+% 由于现有方法普遍依赖离散脉冲对连续值的近似，导致编码精度低、损失大，不得不以牺牲效率换取准确性。我们并非降低这种近似带来的损失，而是提出了一种新的脉冲表达语言——一种不牺牲效率的脉冲序列与连续值的双向精确映射编码Bit Spike Encoding，使得脉冲序列能够在固定的低时间窗内精确表征连续值，从而消除误差在网络线性计算中的传播路径。
+Because existing methods approximate continuous values with discrete spikes, they suffer from low precision and large losses, forcing a trade-off of efficiency for accuracy. Instead of mitigating these approximation losses, we propose a new spike expression language, Bit Spike Encoding (BSE), a bidirectional exact mapping between spike sequences and continuous values. BSE allows spike sequences to precisely represent continuous values within a fixed short time window, thus eliminating the error propagation path in linear computations.
+
+
+BSE relies on an Integrate-and-Fire (IF) neuron with soft reset and a dynamic threshold. Consider a single scalar element. The forward pass is given in Equation~\ref{eq:if_forward_clean}:
+\begin{equation}
+\label{eq:if_forward_clean}
+\begin{aligned}
+V_m(t) &= \sum_{\tau<t} I_{\mathrm{in}}(\tau)\;-\;\sum_{\tau<t} S_{\mathrm{actual}}(\tau)\,\Theta(\tau),\\
+I_{\mathrm{out}}(t) &=
+\begin{cases}
+1, & \text{if } V_m(t)+I_{\mathrm{in}}(t)\ge \Theta(t),\\
+0, & \text{otherwise},
+\end{cases}\\
+S_{\mathrm{actual}}(t) &= I_{\mathrm{out}}(t),\\
+V_m(t{+}1) &= V_m(t)+I_{\mathrm{in}}(t)-I_{\mathrm{out}}(t)\,\Theta(t).
+\end{aligned}
+\end{equation}
+where $I_{\mathrm{in}}(t)$ is the input current, $V_m(t)$ is the membrane potential, $S_{\mathrm{actual}}(t)$ is the emitted spike, $\Theta(t)$ is the dynamic threshold, $I_{\mathrm{out}}(t)$ is the thresholding indicator, and $t,\tau$ are discrete time indices. Then we define the Soma compartment, whose body consists of a current accumulation cavity ($\mathcal{A}$) and a synaptic strength in the time domain.
+% 在bse编码中我们怎么取，此时输入为N位整数时，输出为其严格对应的二进制脉冲。
+
+For Soma, the time-domain synaptic strength at step $t$ is defined as:
+\begin{equation}
+\mathcal{G}(t) = W \cdot W_{\mathrm{bit}}(t), t=0,\dots,N-1.
+\end{equation}
+
+Here, $W$ is the scalar weight, $W_{\mathrm{bit}}(t)$ is the bit weight at step $t$, and $\mathcal{G}(t)$ is the synaptic strength at step $t$. The input to Soma is given by the upstream spike $S_a(t)\in\{0,1\}$ at step $t$, the offset $\mu\in\mathbb{R}$, the scaling factor $\lambda\in\mathbb{R}_{>0}$, and the bias $\beta\in\mathbb{R}$. Its forward pass is given  in Equation~\ref{eq:soma_def}:
+\begin{equation}
+\label{eq:soma_def}
+\begin{aligned}
+Q_a &= \sum_{t=0}^{N-1} S_a(t)\,W_{\mathrm{bit}}(t),\\
+A &= Q_a \cdot W,\\
+Y &= \frac{Q_a}{\lambda}\,W \;-\; W\mu \;+\;\beta,\\
+I_{\mathrm{out}} &= \min \mathcal{S},\qquad \mu_{\mathrm{out}}=-I_{\mathrm{out}},\\
+R_{\mathrm{out}} &= \max\{\,y+\mu_{\mathrm{out}}:\, y\in\mathcal{S}\,\}+\varepsilon,\qquad
+\lambda_{\mathrm{out}}=\frac{2^N-1}{R_{\mathrm{out}}},\\
+Q_y &= \operatorname{clip}_{[0,\,2^N-1]}\!\left(\mathrm{round}\!\left(\lambda_{\mathrm{out}}\,(Y+\mu_{\mathrm{out}})\right)\right).
+\end{aligned}
+\end{equation}
+
+Here, $S_a(t)\in\{0,1\}$ is the input spike at step $t$, $Q_a$ is the integer code in the $N$-step window, $A$ is the accumulated current, $Y$ is the de-scaled and de-biased real value, $\lambda$ and $\mu$ are the input scale and offset, $W$ is the weight, $\beta$ is the bias, $\mathcal{S}$ is the set of observed $Y$ values used for normalization, $I_{\mathrm{out}}$ is the minimum of $\mathcal{S}$, $\mu_{\mathrm{out}}$ is its negation, $R_{\mathrm{out}}$ is the shifted range with small $\varepsilon>0$, $\lambda_{\mathrm{out}}$ is the resulting scale, $Q_y$ is the quantized integer current, and $\operatorname{clip}$ and $\mathrm{round}$ are elementwise clipping and rounding.
+
+The single layer BSE encoding is defined in Equation~\ref{eq:bse_single_layer_def}:
+\begin{equation}
+\label{eq:bse_single_layer_def}
+\begin{aligned}
+(Q_y,\lambda_{\mathrm{out}},\mu_{\mathrm{out}}) &= \mathrm{Soma}\big(\{S_a(t)\}_{t=0}^{N-1};\, W,\,\lambda,\,\mu,\,W_{\mathrm{bit}},\,\beta\big),\\
+\Theta(t) &= W_{\mathrm{bit}}(t),\qquad V_m(0)=0,\qquad I_{\mathrm{in}}(t)=\delta_{t0}\,Q_y,\\
+I_{\mathrm{out}}(t) &=
+\begin{cases}
+1, & \text{if } V_m(t)+I_{\mathrm{in}}(t)\ge \Theta(t),\\
+0, & \text{otherwise},
+\end{cases}\\
+S_y(t) &= I_{\mathrm{out}}(t),\\
+V_m(t{+}1) &= V_m(t)+I_{\mathrm{in}}(t)-I_{\mathrm{out}}(t)\,\Theta(t).
+\end{aligned}
+\end{equation}
+
+Here, $\mathrm{Soma}(\cdot)$ is the mapping defined above. $Q_y$ is the integer current, $\lambda_{\mathrm{out}}$ and $\mu_{\mathrm{out}}$ are the per-output scale and offset, $W_{\mathrm{bit}}(t)$ is the bit weight, $\Theta(t)$ is the threshold, $V_m(t)$ is the membrane potential, $I_{\mathrm{in}}(t)$ is the input current with $\delta_{t0}$ being the Kronecker delta, $I_{\mathrm{out}}(t)$ is the thresholding indicator, and $S_y(t)$ is the emitted spike sequence over the $N$-step window.
+
+For other computations operating on the network’s activation hierarchy—activation–activation multiplications such as the \textit{Query–Key (QK)} matrix multiplication in self-attention—we adopt a “decode–compute–re-encode” strategy. This is a deliberate design choice, not a compromise. First, the two incoming BSE spike trains are losslessly decoded back to their corresponding numerical values. Then, the multiplication is performed using standard ANN multiply–accumulate (MAC) operations. Finally, in a crucial last step, the resulting numerical value is immediately re-encoded by a BSE encoder into a new, high-fidelity spike train. This strategy guarantees that such activation-level computations are mathematically equivalent to those in a quantized ANN, thus eliminating by design one of the primary sources of error in traditional A2S methods. By contrast, weight–activation multiplications (e.g., linear projections) can be directly supported in the BSE domain without this mechanism.
+
+Experiments~\ref{subsec:ablation_studies} show that when the BSE time window length equals the bit width of the original floating-point or fixed-point representation, for example FP16 with 16 bits, BSE encoding does not introduce errors that diffuses through the network. We also provide a mathematical analysis in the appendix proving that under this setting BSE is entropy-preserving. Hence ANN activations can be rendered as sparse and ordered spike trains in the time domain within a fixed window, achieving a reconstruction of information density from the numeric domain to the spiking domain. See Appendix~\ref{app:bse_entropy_proof} for the full proof.
+
+% 综上，BSE 在固定时间窗内实现了确定性、可逆的编码，使线性计算保持严格等价而不引入扩散性误差。这一机制不仅重构了脉冲域中的信息密度，更为整个系统建立了统一且稳定的表达语言。因而，BSE 不仅是后续 ASNC 局部化误差的前提条件，也是保证全局结构一致性与训练可控性的基础环节。
+In summary, BSE achieves deterministic and reversible encoding within a fixed time window, ensuring that linear computations remain strictly equivalent without introducing diffusive errors. This mechanism not only reconstructs information density in the spiking domain but also establishes a unified and stable representational language for the entire system. Therefore, BSE is not only the prerequisite for localized error confinement in ASNC but also the fundamental component that guarantees global structural consistency and training controllability.
+
+\subsection{Adaptive Spiking Neural Codec (ASNC)}
+\label{subsec:asnc}
+
+% % 我们路线的第二步是提出一个结构化逼近器 Adaptive Spiking Neural Codec（ASNC）。现有方法要么依赖长时间窗或时间延迟的近似 ，要么为部分模块设计“spike-friendly”结构替代，结构泛化性差，需要更换为脉冲友好的非线性计算，需要更换后训练对齐且不可避免地引入额外误差。而ASNC可以分段拟合任意非线性计算且输出保持 BSE 格式，无需进行结构替换，同时在BSE编码的精确表征基础上将误差注入于唯一非线性计算模块，从而在整个网络中严格隔离误差扩散路径。
+% The second step of our framework is to propose a structural approximator, Adaptive Spiking Neural Codec (ASNC). Existing methods either rely on long time-window or delay-based approximations, or design “spike-friendly” structural substitutes for specific modules. These approaches suffer from poor structural generalization, inject errors at multiple points within the network, and cannot fix or isolate approximation errors, which then diffuse along depth and temporal dimensions, leading to instability in training and degraded accuracy. In contrast, ASNC can segmentally fit arbitrary nonlinear computations while keeping the output in BSE format, without requiring structural rewrites. Based on the precise representation guaranteed by BSE encoding, ASNC injects errors only into the single nonlinear computation module, thereby strictly isolating error diffusion throughout the entire network.
+
+% 因为现有方法在处理非线性计算时，要么为某种非线性计算设计专用近似模块，要么将部分模块转化为“spike-friendly”的替代结构，从而不可避免地引入新的误差，需要进行额外训练对齐。Rather than 设计专用近似结构或替代，我们提出通用结构化逼近器 Adaptive Spiking Neural Codec (ASNC)，分段拟合任意非线性计算，且保持输入输入与BSE编码格式对齐，从而使误差的累计扩散途径被BSE编码截断，形成误差局部化机制。
+% 每一层强调的东西都没有强调出来；主流做法结构替代-不可避免误差-一些工作不改变结构-但为专有非线性定制专门的近似模块-不够通用-因此我们提出了一种不用替换的通用的非线性模块-好处。
+
+% Because existing methods handle nonlinear computations either by designing dedicated approximation modules for specific operations or by replacing parts of the network with “spike-friendly” substitutes that require additional training alignment, they inevitably introduce new errors. Rather than relying on such dedicated approximations or structural replacements, we propose a general structural approximator, the Adaptive Spiking Neural Codec (ASNC). ASNC performs piecewise approximation for arbitrary nonlinear computations while keeping inputs and outputs aligned with the BSE format, so that the potential path of error accumulation and diffusion is cut off by BSE encoding, yielding a localized error mechanism.
+
+% 我们希望通过对神经元输出进行加权组合得到近似的非线性函数输出，但这需要极高的延迟换取精度。神经网络模型的非线性计算的输入分布符合正态分布特征且有界。因此我们可以根据输入分布划分神经元响应区间，对数据分布集中的部分和敏感性高的outlier分布区间进行更密集的划分进行细粒度拟合，而低分布和敏感型的区间进行稀疏划分进行粗粒度拟合，从而减少整体延迟和损失。
+
+% 现有方法在处理非线性计算时，主流做法是进行结构替代，这不可避免地引入新的误差；一些工作虽然避免了整体结构的改写，为某些特定的非线性设计了专用的近似模块，但缺乏通用性。为此，我们提出了一种无需替换结构的通用非线性逼近模块——自适应脉冲编解码器（Adaptive Spiking Neural Codec, ASNC）。它能够对任意非线性计算进行分段拟合，并保持输入与输出均与BSE编码格式对齐，从而使潜在的误差累计扩散途径被BSE编码截断，形成结构化的误差局部化机制。这一设计不仅提升了逼近的普适性，也保证了整体路径的一致性。
+In handling nonlinear computations, mainstream methods often rely on structural substitutions, which inevitably introduce new errors. Some approaches avoid global rewrites but design dedicated approximation modules for certain nonlinear functions, yet these lack generality. To this end, we propose a universal nonlinear approximation module—the Adaptive Spiking Neural Codec (ASNC)—that requires no structural replacement. ASNC performs piecewise approximation for arbitrary nonlinear computations while keeping both inputs and outputs aligned with the BSE format, so that the potential path of error accumulation and diffusion is eliminated by BSE encoding, forming a structurally localized error mechanism. This design not only enhances the generality of approximation but also ensures overall structural consistency.
+
+% ASNC 作为一种通用的结构化逼近器，通过将输入域划分为自适应的片段，并利用轻量级的脉冲编解码器来拟合各类非线性计算。对于每一个激活的片段，其模拟估计值会被解码后立即重新编码为 BSE 格式，从而保证所有中间张量始终保持在脉冲域中。该机制将逼近误差局部化在 ASNC 单元内部，避免误差在网络深度和时间维度上的扩散，从而维持整个前向路径的结构一致性。
+
+ASNC functions as a universal structural approximator by partitioning the input domain into adaptive segments and fitting each nonlinear computation with lightweight spiking codecs. For each active segment, the analog estimate is decoded and immediately re-encoded into BSE format, ensuring that all intermediate tensors are preserved in the spiking domain. This mechanism localizes approximation errors within the ASNC unit and prevents error diffusion along network depth and temporal dimensions, thereby preserving structural consistency throughout the forward path.
+
+The codec mapping for segment $i$ is defined as shown in Equation~\ref{eq:core}:
+\begin{equation}
+\label{eq:core}
+\text{spikes}_i(t) = \mathrm{LIF}\!\big(\mathrm{quantize}(x\, s_i + b_i),\, \theta_i(t)\big), 
+\qquad
+\mathcal{C}_i(x) = \sum_{t=1}^{T} w_i(t)\, \text{spikes}_i(t),
+\end{equation}
+where $x$ is the input, $s_i,b_i$ are affine parameters, $\theta_i(t)$ is the firing threshold, $w_i(t)$ are trainable decoding weights, $t$ indexes the time step, $T$ is the fixed time window, and $\mathcal{C}_i(x)$ is the decoded analog estimate.  
+
+Segment outputs are preserved in BSE form via direct re-encoding, as shown in Equation~\ref{eq:bse}:
+\begin{equation}
+\label{eq:bse}
+S^{\mathrm{BSE}}(t) = \sum_{i=1}^{N} \mathcal{I}_i(x)\, S^{\mathrm{BSE}}_i(t),
+\end{equation}
+where $\mathcal{I}_i(x)$ selects the active segment(s), $S^{\mathrm{BSE}}_i(t)$ denotes the BSE spike train for segment $i$, and $N$ is the total number of segments. This alignment ensures that the approximation error remains confined to the nonlinear unit.
+
+To preserve fidelity with minimal complexity, segments are adaptively split when their normalized difficulty surpasses a threshold, as shown in Equation~\ref{eq:split}:
+\begin{equation}
+\label{eq:split}
+\frac{L_i}{\bar{L}} \cdot (1 + \sigma_i^2) \cdot \rho_i > \tau_{\mathrm{adaptive}},
+\end{equation}
+where $L_i$ is the segment loss, $\bar{L}$ is the global average loss, $\sigma_i^2$ is the loss variance, $\rho_i$ is the activation proportion, and $\tau_{\mathrm{adaptive}}$ is the adaptive threshold updated during training. Candidate split points $x_s$ are determined by maximizing a multi-criteria score, as shown in Equation~\ref{eq:score}:
+\begin{equation}
+\label{eq:score}
+S(x_s) = \alpha_1 E_{\mathrm{sep}}(x_s) + \alpha_2 C_{\mathrm{cons}}(x_s) + \alpha_3 B_{\mathrm{bal}}(x_s) + \alpha_4 Y_{\mathrm{sep}}(x_s),
+\end{equation}
+where $E_{\mathrm{sep}}$ measures error separation, $C_{\mathrm{cons}}$ reflects internal consistency, $B_{\mathrm{bal}}$ evaluates data balance, $Y_{\mathrm{sep}}$ captures target separation, and $\alpha_1,\alpha_2,\alpha_3,\alpha_4$ are trade-off weights.  
+
+Finally, segment-wise loss contributions are weighted according to morphology-aware importance, as shown in Equation~\ref{eq:weight}:
+\begin{equation}
+\label{eq:weight}
+w_i = 0.5\, I_{\mathrm{func}}(i) + 0.35\, I_{\mathrm{error}}(i) + 0.15\, D_i,
+\end{equation}
+where $I_{\mathrm{func}}(i)$ denotes the functional importance of segment $i$, $I_{\mathrm{error}}(i)$ quantifies its error profile, and $D_i$ represents data density. This weighting strategy guides training focus toward structurally and statistically critical segments.
+
+% 总之，ASNC 作为结构化逼近器，分段拟合任意非线性计算且输出保持 BSE 格式，无需进行结构替换，将误差严格注入且限定于单一非线性模块。这一机制不仅避免了误差在网络深度和时间窗中的扩散，也维护了整个前向路径的结构一致性。在此基础上，引入轻量的替代梯度训练 (STE) 将变得安全且有效，因为赖于等价BSE编码与一致的结构路径，仅在非线性处注入误差，使得训练稳定性和最终准确率都能得到保障。
+In summary, ASNC, as a structural approximator, segmentally fits arbitrary nonlinear computations while keeping the output in BSE format, without requiring structural rewrites, and confines error injection strictly to a single nonlinear module. This mechanism not only prevents errors from diffusing along network depth and temporal dimensions but also preserves structural consistency throughout the forward path. On this basis, introducing lightweight Straight-Through Estimator (STE) training becomes safe and effective, since relying on equivalent BSE encoding and a consistent structural path ensures that errors are injected only at the nonlinear unit, thereby guaranteeing both training stability and final accuracy.
+
+\subsection{STE Training}
+\label{subsec:ste}
+
+% 在高保真且结构一致的前向传播下，我们引入恒等梯度代理STE，使反向传播只需在极小的误差空间内近似求导。由于前向路径已高度接近ANN行为，反向仅在局部逼近，此时STE不再是“启发式替代项”，而是前向一致的等价映射，所以误差极小、收敛稳定。
+With high-fidelity and structurally consistent forward propagation, we introduce the identity-gradient proxy STE, so that backpropagation needs to approximate derivatives within an extremely small error space only. Since the forward path is already very close to ANN behavior, the backward path only approximates locally. In this case, STE is no longer a "heuristic substitute" but a forward-consistent equivalent mapping, resulting in minimal error and stable convergence.
+
+During the forward pass, the network operates on our defined hybrid strategy. For backpropagation, we construct a surrogate computational graph. The key lies in the gradient proxy chosen for the BSE encoder ($S_{\text{out}} = \text{EncodeBSE}(V_{\text{in}})$). We employ a hard \textbf{Straight-Through Estimator (STE)}, defining its gradient as an identity mapping. This choice is \textbf{principled}, not merely heuristic, because our forward pass has already guaranteed extreme numerical fidelity through BSE and exact linear operations. The SNN's output is functionally consistent with its ANN counterpart—an assumption strongly supported by our end-to-end experiments (e.g., Table~\ref{tab:sota_scaling_performance_steps_nostyle}) where negligible performance degradation was observed even on 70B models. This empirical evidence allows us to safely assume the gradient can pass directly without more complex approximations. This leads to a more stable and efficient training process, grounding our methodology in established Quantization-Aware Training (QAT) theory. 
+
+% 总之，在我们的方法中，虽然整个网络的反向传播都使用 STE 替代梯度，但因前两步（BSE 与 ASNC）已确保前向路径高度等价且结构一致，误差从哪里引入被严格限定为非线性计算模块这一唯一位置。这样设计意味着即使全局使用 STE，也不会在多个结构点同时产生近似误差；误差不随深度或层数扩散，而是被集中、可控并且易于追踪。该结构使训练过程更加稳定，准确率更有保障，在大规模或时间窗受限的条件下依然表现优异。
+In summary, although the entire network employs STE surrogate gradients during backpropagation, the first two steps (BSE and ASNC) have already ensured that the forward path remains highly equivalent and structurally consistent, thereby strictly confining error injection to the single nonlinear computation module. This design means that even with global use of STE, no additional approximation errors are introduced at multiple structural points; errors do not diffuse across depth or layers but remain concentrated, controllable, and easily traceable. Such a structure makes the training process more stable and the accuracy more reliable, while maintaining strong performance even under large-scale or short time-window conditions.
