@@ -417,8 +417,8 @@ class SpikeQwen3Attention(nn.Module):
         self.av_mul = SpikeFP32Multiplier(neuron_template=nt)
         self.av_adder = SpikeFP32Adder(neuron_template=nt)
 
-        # Mask MUX (处理单比特 mask)
-        self.mask_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        # Mask MUX (处理 FP32 脉冲, 32 位)
+        self.mask_mux = VecMUX(neuron_template=nt, max_param_shape=(32,))
 
         # -inf constant for masking
         self.register_buffer('neg_inf_pulse', float32_to_pulse(

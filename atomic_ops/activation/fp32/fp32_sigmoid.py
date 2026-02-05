@@ -41,7 +41,7 @@ class SpikeFP32Sigmoid(nn.Module):
         self.divider = SpikeFP32Divider(neuron_template=nt)
 
         # 符号翻转 (用于计算-x)
-        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
     def forward(self, x):
         """

@@ -43,9 +43,9 @@ class Subtractor25Bit(nn.Module):
         self.bits = 25
         nt = neuron_template
         # 单实例 (动态扩展机制支持不同位宽)
-        self.not_gate = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.adder = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.borrow_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_gate = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.adder = FullAdder(neuron_template=nt, max_param_shape=None)
+        self.borrow_not = VecNOT(neuron_template=nt, max_param_shape=None)
 
     def forward(self, A, B):
         """A - B, LSB first
@@ -86,9 +86,9 @@ class Subtractor48Bit(nn.Module):
         self.bits = 48
         nt = neuron_template
         # 单实例 (动态扩展机制支持不同位宽)
-        self.not_gate = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.adder = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.borrow_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_gate = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.adder = FullAdder(neuron_template=nt, max_param_shape=None)
+        self.borrow_not = VecNOT(neuron_template=nt, max_param_shape=None)
 
     def forward(self, A, B):
         not_b = []
@@ -130,9 +130,9 @@ class DivisionIteration25(nn.Module):
         super().__init__()
         nt = neuron_template
         self.sub = Subtractor25Bit(neuron_template=nt)
-        self.not_borrow = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_borrow = VecNOT(neuron_template=nt, max_param_shape=None)
         # 单实例 (动态扩展机制支持不同位宽)
-        self.mux_r = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_r = VecMUX(neuron_template=nt, max_param_shape=None)
 
     def forward(self, R, D):
         """
@@ -167,9 +167,9 @@ class DivisionIteration(nn.Module):
         super().__init__()
         nt = neuron_template
         self.sub = Subtractor48Bit(neuron_template=nt)
-        self.not_borrow = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_borrow = VecNOT(neuron_template=nt, max_param_shape=None)
         # 单实例 (动态扩展机制支持不同位宽)
-        self.mux_r = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_r = VecMUX(neuron_template=nt, max_param_shape=None)
 
     def forward(self, R, D_extended):
         """
@@ -214,93 +214,93 @@ class SpikeFP32Divider(nn.Module):
         nt = neuron_template
         
         # ===== 符号 =====
-        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=None)
 
         # ===== 指数运算 (10位防止溢出) =====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=None)
+        self.exp_not = VecNOT(neuron_template=nt, max_param_shape=None)
         # 加bias: + 127 (10位)
         self.exp_add_bias = VecAdder(bits=10, neuron_template=nt, max_param_shape=(10,))
         # 指数调整 (归一化时减1) (10位)
         self.exp_adjust = VecAdder(bits=10, neuron_template=nt, max_param_shape=(10,))
-        self.exp_adjust_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.exp_adjust_not = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # ===== 溢出/下溢检测 =====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.overflow_check_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.overflow_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.overflow_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.overflow_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.overflow_check_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.overflow_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.overflow_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.overflow_not = VecNOT(neuron_template=nt, max_param_shape=None)
         # 下溢
-        self.underflow_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.underflow_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.underflow_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.underflow_not = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.underflow_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.underflow_or = VecOR(neuron_template=nt, max_param_shape=None)
         # 溢出/下溢结果MUX - 单实例
-        self.overflow_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.overflow_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.underflow_mux_e = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.underflow_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.overflow_mux_e = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.overflow_mux_m = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.underflow_mux_e = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.underflow_mux_m = VecMUX(neuron_template=nt, max_param_shape=None)
 
         # ===== Subnormal输出处理 =====
         from .fp32_mul import BarrelShifterRight48
         self.subnormal_shifter = BarrelShifterRight48(neuron_template=nt)
         self.shift_add_one = VecAdder(bits=10, neuron_template=nt, max_param_shape=(10,))
         # 单实例 (动态扩展机制支持不同位宽)
-        self.subnorm_sticky_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.subnorm_rne_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.subnorm_rne_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.subnorm_sticky_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.subnorm_rne_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.subnorm_rne_and = VecAND(neuron_template=nt, max_param_shape=None)
         self.subnorm_round_adder = VecAdder(bits=24, neuron_template=nt, max_param_shape=(24,))
-        self.subnorm_mux_m = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.is_subnormal_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.not_very_underflow = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.subnorm_mux_m = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.is_subnormal_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.not_very_underflow = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # ===== 归一化 =====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.normalize_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.normalize_exp_mux = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.q0_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.normalize_mux = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.normalize_exp_mux = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.q0_not = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # ===== 特殊值检测 =====
         # 单实例 (动态扩展机制支持不同位宽)
-        self.exp_all_one_and_a = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.exp_all_one_and_b = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.exp_all_one_and_a = VecAND(neuron_template=nt, max_param_shape=None)
+        self.exp_all_one_and_b = VecAND(neuron_template=nt, max_param_shape=None)
 
         # 指数全0检测
-        self.exp_zero_or_a = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.exp_zero_or_b = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.exp_zero_not_a = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.exp_zero_not_b = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.exp_zero_or_a = VecOR(neuron_template=nt, max_param_shape=None)
+        self.exp_zero_or_b = VecOR(neuron_template=nt, max_param_shape=None)
+        self.exp_zero_not_a = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.exp_zero_not_b = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # 尾数全0检测
-        self.mant_zero_or_a = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.mant_zero_or_b = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.mant_zero_not_a = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.mant_zero_not_b = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.mant_zero_or_a = VecOR(neuron_template=nt, max_param_shape=None)
+        self.mant_zero_or_b = VecOR(neuron_template=nt, max_param_shape=None)
+        self.mant_zero_not_a = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.mant_zero_not_b = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # 零检测: E=0 AND M=0
-        self.a_is_zero_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.b_is_zero_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.a_is_zero_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.b_is_zero_and = VecAND(neuron_template=nt, max_param_shape=None)
 
         # Inf检测: E=FF AND M=0
-        self.a_is_inf_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.b_is_inf_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.a_is_inf_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.b_is_inf_and = VecAND(neuron_template=nt, max_param_shape=None)
 
         # NaN检测: E=FF AND M!=0
-        self.a_mant_nonzero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.b_mant_nonzero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.a_is_nan_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.b_is_nan_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.either_nan_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.a_mant_nonzero_not = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.b_mant_nonzero_not = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.a_is_nan_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.b_is_nan_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.either_nan_or = VecOR(neuron_template=nt, max_param_shape=None)
 
         # x/0 = Inf, 0/0 = NaN
-        self.div_by_zero_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.zero_div_zero_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.div_by_zero_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.zero_div_zero_and = VecAND(neuron_template=nt, max_param_shape=None)
 
         # 结果特殊值组合
-        self.result_is_nan_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.result_is_inf_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.result_is_zero_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.result_is_nan_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.result_is_inf_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.result_is_zero_or = VecOR(neuron_template=nt, max_param_shape=None)
 
         # ===== SNN原生逐位除法 (49次迭代) =====
         # 单实例 (动态扩展机制支持不同位宽)
@@ -313,8 +313,8 @@ class SpikeFP32Divider(nn.Module):
         self.vec_or_tree = VecORTree(neuron_template=nt, max_param_shape=(25,))
 
         # ===== RNE舍入 =====
-        self.rne_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.rne_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.rne_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.rne_and = VecAND(neuron_template=nt, max_param_shape=None)
         self.round_adder = VecAdder(bits=23, neuron_template=nt, max_param_shape=(23,))
 
         # ===== 输出选择 - 向量化 =====
@@ -323,13 +323,13 @@ class SpikeFP32Divider(nn.Module):
         self.vec_mux_mant = VecMUX(neuron_template=nt, max_param_shape=(23,))  # 23-bit 尾数
         
         # 纯SNN NOT门
-        self.not_a_is_zero = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_b_is_inf = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_result_is_nan = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_result_is_inf = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.inf_and_not_nan = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.zero_and_not_nan = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.zero_and_not_inf = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.not_a_is_zero = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_b_is_inf = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_result_is_nan = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_result_is_inf = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.inf_and_not_nan = VecAND(neuron_template=nt, max_param_shape=None)
+        self.zero_and_not_nan = VecAND(neuron_template=nt, max_param_shape=None)
+        self.zero_and_not_inf = VecAND(neuron_template=nt, max_param_shape=None)
         
     def forward(self, A, B):
         """

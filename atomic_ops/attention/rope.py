@@ -158,7 +158,7 @@ class SpikeFP32RoPE(nn.Module):
         self.add_odd = SpikeFP32Adder(neuron_template=nt)
 
         # 符号翻转 (使用 VecXOR)
-        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
+        self.sign_xor = VecXOR(neuron_template=nt, max_param_shape=None)
 
     def forward(self, x, position):
         """应用 RoPE (向量化) - 与 HuggingFace 实现一致

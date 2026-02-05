@@ -74,20 +74,22 @@ class SpikeFP64Floor(nn.Module):
         super().__init__()
         nt = neuron_template
 
-        # 指数减法器 (E - 1023) - 单实例
-        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        # 指数减法器 (E - 1023) - 处理11位指数
+        max_shape_11 = (11,)
+        max_shape_1 = (1,)
+        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_11)
 
         # E < 1023 检测
-        self.lt_bias_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.lt_bias_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_1)
 
-        # E >= 1075 检测 (无小数) - 单实例
-        self.ge_no_frac = FullAdder(neuron_template=nt, max_param_shape=(1,))
+        # E >= 1075 检测 (无小数) - 处理11位指数
+        self.ge_no_frac = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
 
-        # 尾数清零 (52位) - 单实例
-        self.mant_clear_cmp = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.mant_clear_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.mant_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
+        # 尾数清零 (52位) - 单实例，但 mant_clear_not 处理 11 位阈值
+        self.mant_clear_cmp = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_clear_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_11)
+        self.mant_mux = MUXGate(neuron_template=nt, max_param_shape=max_shape_1)
         
         # 预分配参数形状
         max_shape_64 = (64,)
@@ -233,8 +235,10 @@ class SpikeFP64ScaleBy2K(nn.Module):
         nt = neuron_template
 
         # E - 1023 - 单实例
-        self.exp_sub_bias = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not_bias = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        max_shape_11 = (11,)
+        max_shape_1 = (1,)
+        self.exp_sub_bias = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.exp_not_bias = NOTGate(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 预分配参数形状
         max_shape_64 = (64,)
@@ -243,19 +247,19 @@ class SpikeFP64ScaleBy2K(nn.Module):
 
         # Barrel Shifter Right (向量化: 单实例VecMUX，预分配参数)
         self.shift_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_52)
-        self.shift_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.shift_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
-        # 符号处理 (向量化) - 单实例
-        self.neg_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.neg_add = FullAdder(neuron_template=nt, max_param_shape=(1,))
+        # 符号处理 (向量化) - 单实例 (neg_not 处理 11 位 k_abs_le)
+        self.neg_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_11)
+        self.neg_add = FullAdder(neuron_template=nt, max_param_shape=None)
         self.sign_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_11)
 
         # 指数相加 - 单实例
-        self.exp_add = FullAdder(neuron_template=nt, max_param_shape=(1,))
+        self.exp_add = FullAdder(neuron_template=nt, max_param_shape=None)
 
         # k=0检测 (向量化)
         self.k_zero_or = VecORTree(neuron_template=nt, max_param_shape=max_shape_64)
-        self.k_zero_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.k_zero_not = NOTGate(neuron_template=nt, max_param_shape=None)
         self.zero_mux = VecMUX(neuron_template=nt, max_param_shape=max_shape_64)
         
     def forward(self, x, k):
@@ -438,17 +442,19 @@ class SpikeFP64ExtractLow6(nn.Module):
         super().__init__()
         nt = neuron_template
 
-        # E - 1023 - 单实例
-        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        # E - 1023 - 单实例 (exp_not 处理 11 位)
+        max_shape_11 = (11,)
+        max_shape_1 = (1,)
+        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_11)
 
         # shift解码 - 单实例
-        self.shift_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.shift_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        self.shift_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_1)
+        self.shift_and = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 输出逻辑 - 单实例
-        self.b_ands = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.b_ors = ORGate(neuron_template=nt, max_param_shape=(1,))
+        self.b_ands = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
+        self.b_ors = ORGate(neuron_template=nt, max_param_shape=max_shape_1)
         
     def forward(self, x):
         device = x.device
@@ -774,7 +780,7 @@ class SpikeFP32SigmoidFullFP64(nn.Module):
         self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
         self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
 
-        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
     def forward(self, x):
         """
@@ -836,7 +842,7 @@ class SpikeFP32SiLUFullFP64(nn.Module):
         self.fp64_mul = SpikeFP64Multiplier(neuron_template=nt)
         self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
 
-        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
     def forward(self, x):
         device = x.device

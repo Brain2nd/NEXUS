@@ -433,9 +433,12 @@ def train_sequential_mnist():
     w2_init = q[:N_CLASSES, :] * 0.5
     model.set_weights(w1_init, w2_init)
 
-    # 使用默认参数，不手动覆盖 - 尊重框架默认阈值
-    # SimpleLIFNode 默认 β ≈ 1-1e-7 (近似无泄漏), v_threshold=1.0
-    # SPSA 将从这个初始状态开始探索
+    # 高泄漏启动：将 β 初始化为 0.01 (每步衰减 99%)
+    # 根据 CHAOS_DYNAMICS_REPORT 结论：高泄漏启动避免饱和，SPSA 可探索到最优 β≈0.90
+    HIGH_LEAK_BETA = 0.01
+    for module in model.modules():
+        if isinstance(module, SimpleLIFNode) and hasattr(module, '_beta'):
+            module._beta.data.fill_(HIGH_LEAK_BETA)
 
     # 打印初始参数
     beta_init, vth_init = _get_lif_params_raw(model)

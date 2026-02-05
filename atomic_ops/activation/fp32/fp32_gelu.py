@@ -56,7 +56,7 @@ class SpikeFP32GELU(nn.Module):
         self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
         self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
 
-        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
     def forward(self, x):
         """
@@ -120,7 +120,7 @@ class SpikeFP32GELUExact(nn.Module):
         self.fp64_divider = SpikeFP64Divider(neuron_template=nt)
         self.fp64_to_fp32 = FP64ToFP32Converter(neuron_template=nt)
         
-        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=None)
         
     def forward(self, x):
         """
