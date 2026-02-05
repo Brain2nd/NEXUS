@@ -468,6 +468,41 @@ def train_sequential_mnist():
         'test_acc': [],
     }
 
+    # 检查点保存目录
+    ckpt_dir = os.path.join(os.path.dirname(__file__), 'exp14_checkpoints')
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    def save_checkpoint(model, epoch, loss, acc, trajectory, prefix='ckpt'):
+        """保存模型检查点"""
+        w1, w2 = _get_weight_floats(model)
+        beta, vth = _get_lif_params_raw(model)
+        w_beta, w_vth = _get_lif_params_logit(model)
+
+        ckpt = {
+            'epoch': epoch,
+            'loss': loss,
+            'acc': acc,
+            'weights': {
+                'w1': w1.cpu().numpy().tolist(),
+                'w2': w2.cpu().numpy().tolist(),
+            },
+            'lif_params': {
+                'beta': beta.cpu().numpy().tolist(),
+                'vth': vth.cpu().numpy().tolist(),
+                'w_beta_logit': w_beta.cpu().numpy().tolist(),
+                'w_vth_logit': w_vth.cpu().numpy().tolist(),
+            },
+            'trajectory_so_far': trajectory,
+        }
+        ckpt_path = os.path.join(ckpt_dir, f'{prefix}_epoch{epoch:03d}.json')
+        with open(ckpt_path, 'w') as f:
+            json.dump(ckpt, f, indent=2)
+        print(f"    [ckpt] Saved to {ckpt_path}", flush=True)
+        return ckpt_path
+
+    # 保存初始检查点
+    save_checkpoint(model, 0, loss0, acc0, trajectory, prefix='init')
+
     # 训练循环
     momentum_buf = None
     import time
@@ -528,6 +563,9 @@ def train_sequential_mnist():
 
         prev_loss = loss
         prev_beta = beta_cur.clone()
+
+        # 每个 epoch 保存检查点
+        save_checkpoint(model, epoch, loss, acc, trajectory, prefix='epoch')
 
         # 每 5 轮评估测试集
         if epoch % 5 == 0:
