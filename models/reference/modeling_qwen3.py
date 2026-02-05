@@ -64,6 +64,7 @@ from atomic_ops import (
 )
 from atomic_ops.core.vec_logic_gates import VecMUX
 from atomic_ops.core.reset_utils import reset_children
+from atomic_ops.core.training_mode import TrainingMode
 
 
 # =============================================================================
@@ -90,6 +91,7 @@ class SpikeQwen3Config:
         hidden_act: Activation function (default: 'silu')
         attention_bias: Whether to use bias in attention projections (default: False)
         attention_dropout: Dropout rate for attention (default: 0.0, unused in SNN)
+        training_mode: Training mode (None/TrainingMode.STE) for STE backward propagation
     """
 
     def __init__(
@@ -107,6 +109,7 @@ class SpikeQwen3Config:
         hidden_act: str = 'silu',
         attention_bias: bool = False,
         attention_dropout: float = 0.0,
+        training_mode=None,
     ):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -138,6 +141,7 @@ class SpikeQwen3Config:
         self.hidden_act = hidden_act
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
+        self.training_mode = TrainingMode.validate(training_mode)
 
     def __repr__(self):
         return (
@@ -202,6 +206,7 @@ class SpikeQwen3Config:
             'hidden_act': self.hidden_act,
             'attention_bias': self.attention_bias,
             'attention_dropout': self.attention_dropout,
+            'training_mode': self.training_mode,
         }
 
 
@@ -262,6 +267,7 @@ class SpikeQwen3MLP(nn.Module):
     Args:
         config: SpikeQwen3Config instance
         neuron_template: Neuron template for physical simulation
+        training_mode: Training mode (None/TrainingMode.STE) for STE backward propagation
 
     Input:
         x: [..., hidden_size, 32] FP32 pulse
@@ -270,20 +276,22 @@ class SpikeQwen3MLP(nn.Module):
         [..., hidden_size, 32] FP32 pulse
     """
 
-    def __init__(self, config: SpikeQwen3Config, neuron_template=None):
+    def __init__(self, config: SpikeQwen3Config, neuron_template=None, training_mode=None):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
+        self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
+        tm = self.training_mode
 
         # Three Linear projections
-        self.gate_proj = SpikeFP32Linear(self.hidden_size, self.intermediate_size, neuron_template=nt)
-        self.up_proj = SpikeFP32Linear(self.hidden_size, self.intermediate_size, neuron_template=nt)
-        self.down_proj = SpikeFP32Linear(self.intermediate_size, self.hidden_size, neuron_template=nt)
+        self.gate_proj = SpikeFP32Linear(self.hidden_size, self.intermediate_size, neuron_template=nt, training_mode=tm)
+        self.up_proj = SpikeFP32Linear(self.hidden_size, self.intermediate_size, neuron_template=nt, training_mode=tm)
+        self.down_proj = SpikeFP32Linear(self.intermediate_size, self.hidden_size, neuron_template=nt, training_mode=tm)
 
         # SiLU activation
-        self.act_fn = SpikeFP32SiLU(neuron_template=nt)
+        self.act_fn = SpikeFP32SiLU(neuron_template=nt, training_mode=tm)
 
         # Element-wise multiplication (gate * up)
         self.mul = SpikeFP32Multiplier(neuron_template=nt)
@@ -347,6 +355,7 @@ class SpikeQwen3Attention(nn.Module):
         config: SpikeQwen3Config instance
         layer_idx: Layer index (for future cache support)
         neuron_template: Neuron template for physical simulation
+        training_mode: Training mode (None/TrainingMode.STE) for STE backward propagation
 
     Input:
         hidden_states: [batch, seq_len, hidden_size, 32] FP32 pulse
@@ -357,7 +366,7 @@ class SpikeQwen3Attention(nn.Module):
         [batch, seq_len, hidden_size, 32] FP32 pulse
     """
 
-    def __init__(self, config: SpikeQwen3Config, layer_idx: int = 0, neuron_template=None):
+    def __init__(self, config: SpikeQwen3Config, layer_idx: int = 0, neuron_template=None, training_mode=None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -367,29 +376,35 @@ class SpikeQwen3Attention(nn.Module):
         self.head_dim = config.head_dim
         self.num_key_value_groups = self.num_attention_heads // self.num_key_value_heads
         self.scaling = self.head_dim ** -0.5
+        self.training_mode = TrainingMode.validate(training_mode)
 
         nt = neuron_template
+        tm = self.training_mode
 
         # Q/K/V/O Linear projections
         self.q_proj = SpikeFP32Linear(
             config.hidden_size,
             config.num_attention_heads * config.head_dim,
-            neuron_template=nt
+            neuron_template=nt,
+            training_mode=tm
         )
         self.k_proj = SpikeFP32Linear(
             config.hidden_size,
             config.num_key_value_heads * config.head_dim,
-            neuron_template=nt
+            neuron_template=nt,
+            training_mode=tm
         )
         self.v_proj = SpikeFP32Linear(
             config.hidden_size,
             config.num_key_value_heads * config.head_dim,
-            neuron_template=nt
+            neuron_template=nt,
+            training_mode=tm
         )
         self.o_proj = SpikeFP32Linear(
             config.num_attention_heads * config.head_dim,
             config.hidden_size,
-            neuron_template=nt
+            neuron_template=nt,
+            training_mode=tm
         )
 
         # QK Norm (Qwen3 specific: RMSNorm on head_dim only)
@@ -700,6 +715,7 @@ class SpikeQwen3DecoderLayer(nn.Module):
         config: SpikeQwen3Config instance
         layer_idx: Layer index
         neuron_template: Neuron template for physical simulation
+        training_mode: Training mode (None/TrainingMode.STE) for STE backward propagation
 
     Input:
         hidden_states: [batch, seq_len, hidden_size, 32] FP32 pulse
@@ -710,12 +726,14 @@ class SpikeQwen3DecoderLayer(nn.Module):
         [batch, seq_len, hidden_size, 32] FP32 pulse
     """
 
-    def __init__(self, config: SpikeQwen3Config, layer_idx: int = 0, neuron_template=None):
+    def __init__(self, config: SpikeQwen3Config, layer_idx: int = 0, neuron_template=None, training_mode=None):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx
+        self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
+        tm = self.training_mode
 
         # Pre-attention RMSNorm
         self.input_layernorm = SpikeQwen3RMSNorm(
@@ -725,7 +743,7 @@ class SpikeQwen3DecoderLayer(nn.Module):
         )
 
         # Self Attention
-        self.self_attn = SpikeQwen3Attention(config, layer_idx, neuron_template=nt)
+        self.self_attn = SpikeQwen3Attention(config, layer_idx, neuron_template=nt, training_mode=tm)
 
         # Post-attention RMSNorm
         self.post_attention_layernorm = SpikeQwen3RMSNorm(
@@ -735,7 +753,7 @@ class SpikeQwen3DecoderLayer(nn.Module):
         )
 
         # MLP
-        self.mlp = SpikeQwen3MLP(config, neuron_template=nt)
+        self.mlp = SpikeQwen3MLP(config, neuron_template=nt, training_mode=tm)
 
         # Residual additions (pure SNN)
         self.residual_add_attn = SpikeFP32Adder(neuron_template=nt)
@@ -800,6 +818,7 @@ class SpikeQwen3Model(nn.Module):
     Args:
         config: SpikeQwen3Config instance
         neuron_template: Neuron template for physical simulation
+        training_mode: Training mode (None/TrainingMode.STE) for STE backward propagation
 
     Input:
         input_ids: [batch, seq_len] integer tensor
@@ -810,23 +829,26 @@ class SpikeQwen3Model(nn.Module):
         [batch, seq_len, hidden_size, 32] FP32 pulse
     """
 
-    def __init__(self, config: SpikeQwen3Config, neuron_template=None):
+    def __init__(self, config: SpikeQwen3Config, neuron_template=None, training_mode=None):
         super().__init__()
         self.config = config
         self.padding_idx = getattr(config, 'pad_token_id', None)
         self.vocab_size = config.vocab_size
+        self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
+        tm = self.training_mode
 
         # Token embedding
         self.embed_tokens = SpikeFP32Embedding(
             config.vocab_size,
             config.hidden_size,
-            neuron_template=nt
+            neuron_template=nt,
+            training_mode=tm
         )
 
         # Decoder layers
         self.layers = nn.ModuleList([
-            SpikeQwen3DecoderLayer(config, layer_idx, neuron_template=nt)
+            SpikeQwen3DecoderLayer(config, layer_idx, neuron_template=nt, training_mode=tm)
             for layer_idx in range(config.num_hidden_layers)
         ])
 
@@ -898,6 +920,8 @@ class SpikeQwen3ForCausalLM(nn.Module):
     Args:
         config: SpikeQwen3Config instance
         neuron_template: Neuron template for physical simulation
+        training_mode: Training mode (None/TrainingMode.STE) for STE backward propagation.
+            If None, uses config.training_mode.
 
     Input:
         input_ids: [batch, seq_len] integer tensor
@@ -908,20 +932,26 @@ class SpikeQwen3ForCausalLM(nn.Module):
         [batch, seq_len, vocab_size, 32] FP32 pulse (logits)
     """
 
-    def __init__(self, config: SpikeQwen3Config, neuron_template=None):
+    def __init__(self, config: SpikeQwen3Config, neuron_template=None, training_mode=None):
         super().__init__()
         self.config = config
         self.vocab_size = config.vocab_size
+        # Use training_mode from argument, or fallback to config.training_mode
+        if training_mode is None:
+            training_mode = getattr(config, 'training_mode', None)
+        self.training_mode = TrainingMode.validate(training_mode)
         nt = neuron_template
+        tm = self.training_mode
 
         # Base model
-        self.model = SpikeQwen3Model(config, neuron_template=nt)
+        self.model = SpikeQwen3Model(config, neuron_template=nt, training_mode=tm)
 
         # LM head: hidden_size -> vocab_size
         self.lm_head = SpikeFP32Linear(
             config.hidden_size,
             config.vocab_size,
-            neuron_template=nt
+            neuron_template=nt,
+            training_mode=tm
         )
 
     def forward(

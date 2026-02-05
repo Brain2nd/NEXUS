@@ -49,7 +49,7 @@ class SpikeFP32SiLU(nn.Module):
         # 如果训练模式，用 STE 包装以支持梯度
         if TrainingMode.is_ste(self.training_mode) and self.training:
             from atomic_ops.core.ste import ste_silu
-            return ste_silu(x, out_pulse)
+            return ste_silu(x, out_pulse, sig_x)
 
         return out_pulse
 
