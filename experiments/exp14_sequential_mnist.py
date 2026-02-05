@@ -419,9 +419,8 @@ def train_sequential_mnist():
     test_pulse = test_pulse.reshape(N_TEST_SAMPLES, SEQ_LEN, N_FEATURES, 32)
     print(f"[encode] Done. Train pulse: {train_pulse.shape}, Test pulse: {test_pulse.shape}", flush=True)
 
-    # 创建模型
-    template = SimpleLIFNode(v_threshold=1.0, beta=0.018)  # β ≈ sigmoid(-4)
-    model = SimpleSpikeMLP(N_FEATURES, HIDDEN_SIZE, N_CLASSES, neuron_template=template).to(DEVICE)
+    # 创建模型 - 使用默认神经元参数，让SPSA发现最优值
+    model = SimpleSpikeMLP(N_FEATURES, HIDDEN_SIZE, N_CLASSES).to(DEVICE)
 
     # 权重初始化
     w1_shape = (HIDDEN_SIZE, N_FEATURES)
@@ -434,17 +433,9 @@ def train_sequential_mnist():
     w2_init = q[:N_CLASSES, :] * 0.5
     model.set_weights(w1_init, w2_init)
 
-    # 初始化生成元参数
-    # w_beta = -4.0 → β ≈ 0.018 (高泄漏启动)
-    # w_vth = 2.3 → V_th ≈ 2.4
-    for module in model.modules():
-        if isinstance(module, SimpleLIFNode) and hasattr(module, '_beta'):
-            n = module._beta.numel()
-            # 从 Logit 空间初始化
-            w_beta_init = torch.full((n,), -4.0)
-            w_vth_init = torch.full((n,), 2.3)
-            module._beta.data.copy_(torch.sigmoid(w_beta_init).view(module._beta.shape))
-            module._v_threshold.data.copy_((F.softplus(w_vth_init) + 0.01).view(module._v_threshold.shape))
+    # 使用默认参数，不手动覆盖 - 尊重框架默认阈值
+    # SimpleLIFNode 默认 β ≈ 1-1e-7 (近似无泄漏), v_threshold=1.0
+    # SPSA 将从这个初始状态开始探索
 
     # 打印初始参数
     beta_init, vth_init = _get_lif_params_raw(model)
