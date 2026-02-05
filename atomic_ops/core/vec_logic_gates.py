@@ -194,41 +194,31 @@ class VecXOR(nn.Module):
         self.not_a_gate = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)
         self.not_b_gate = VecNOT(neuron_template, mode=mode, max_param_shape=max_param_shape)
         # XOR = (A AND NOT_B) OR (NOT_A AND B)
-        self.and1 = _create_neuron(neuron_template, threshold=1.5,
-                                   max_param_shape=max_param_shape)  # A AND NOT_B
-        self.and2 = _create_neuron(neuron_template, threshold=1.5,
-                                   max_param_shape=max_param_shape)  # NOT_A AND B
-        self.or_out = _create_neuron(neuron_template, threshold=0.5,
-                                     max_param_shape=max_param_shape)  # 输出 OR
+        # 使用 VecAND/VecOR 确保 .to(device) 能正确移动所有参数
+        self.and1 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # A AND NOT_B
+        self.and2 = VecAND(neuron_template, mode=mode, max_param_shape=max_param_shape)  # NOT_A AND B
+        self.or_out = VecOR(neuron_template, mode=mode, max_param_shape=max_param_shape)  # 输出 OR
 
     def forward(self, a, b):
         # 内部生成反相信号 - 每个输入使用独立的NOT门
         not_a = self.not_a_gate(a)
         not_b = self.not_b_gate(b)
 
-        # XOR逻辑
-        term1 = self.and1(a + not_b)  # A AND NOT_B
-        term2 = self.and2(not_a + b)  # NOT_A AND B
-        result = self.or_out(term1 + term2)  # OR
+        # XOR逻辑 - 使用门的标准接口
+        term1 = self.and1(a, not_b)  # A AND NOT_B
+        term2 = self.and2(not_a, b)  # NOT_A AND B
+        result = self.or_out(term1, term2)  # OR
 
-        # BIT_EXACT 模式：forward 结束后清理内部神经元的膜电位
-        if SpikeMode.should_reset(self._instance_mode):
-            self._reset_internal_nodes()
+        # 子门已有模式控制，无需额外重置
         return result
-
-    def _reset_internal_nodes(self):
-        """重置内部神经元节点（不包括已经有模式控制的子门）"""
-        for node in [self.and1, self.and2, self.or_out]:
-            if hasattr(node, 'reset_state'):
-                node.reset_state()
-            else:
-                node.reset()
 
     def reset_state(self):
         """只重置膜电位（高效版本）"""
         self.not_a_gate.reset_state()
         self.not_b_gate.reset_state()
-        self._reset_internal_nodes()
+        self.and1.reset_state()
+        self.and2.reset_state()
+        self.or_out.reset_state()
 
     def reset(self):
         """完全重置"""
@@ -239,10 +229,8 @@ class VecXOR(nn.Module):
         self.or_out.reset()
 
     def _reset(self):
-        for gate in [self.not_a_gate, self.not_b_gate]:
+        for gate in [self.not_a_gate, self.not_b_gate, self.and1, self.and2, self.or_out]:
             gate._reset() if hasattr(gate, '_reset') else gate.reset()
-        for node in [self.and1, self.and2, self.or_out]:
-            node._reset() if hasattr(node, '_reset') else node.reset()
 
 
 class VecMUX(nn.Module):
