@@ -53,10 +53,16 @@ N_EPOCHS = 20
 BATCH_SIZE = 1  # 逐样本处理 (SNN 时序依赖)
 
 # SPSA 配置 (各向异性)
-C_W, C_BETA, C_VTH = 0.05, 0.001, 0.1
-A_W, A_BETA, A_VTH = 0.01, 0.0001, 0.001
+# C_BETA=0.1: 扰动后 β 范围 [0.01±0.1] → clamp到[0.01,0.11]
+# 让 SPSA 能感知 β 变化对 loss 的影响
+C_W, C_BETA, C_VTH = 0.05, 0.1, 0.1
+A_W, A_BETA, A_VTH = 0.01, 0.05, 0.001  # A_BETA 适度增大加速学习
 MOMENTUM = 0.9
-GRAD_CLIP = 5.0
+GRAD_CLIP = 10.0  # 与 exp13 对齐
+
+# SPSA 衰减参数 (与 exp13 对齐)
+ALPHA = 0.602       # 学习率衰减指数
+GAMMA_SPSA = 0.101  # 扰动幅度衰减指数
 
 
 # ============================================================
@@ -242,10 +248,15 @@ def spsa_step_anisotropic(model, labels, device, precomputed_pulses,
                           momentum_buf=None, mu=0.9, max_samples=50):
     """各向异性 SPSA 优化步"""
 
-    # 获取当前参数
+    # 获取当前参数 (保存原始值用于恢复和更新基准)
     w1, w2 = _get_weight_floats(model)
     w_flat = torch.cat([w1.flatten(), w2.flatten()])
     all_beta, all_vth = _get_lif_params(model)
+
+    # 保存原始参数 - 用于恢复和作为更新基准
+    w1_orig, w2_orig = w1.clone(), w2.clone()
+    w_flat_orig = w_flat.clone()  # 关键：保存展平后的原始权重
+    beta_orig, vth_orig = all_beta.clone(), all_vth.clone()
 
     # 生成扰动方向 (Rademacher)
     delta_W = torch.sign(torch.randn_like(w_flat))
@@ -279,14 +290,23 @@ def spsa_step_anisotropic(model, labels, device, precomputed_pulses,
     loss_minus, acc_minus = evaluate_model(model, labels, device, max_samples=max_samples, precomputed_pulses=precomputed_pulses, phase='train', verbose=False)
 
     # DEBUG: 打印 loss 差异
-    print(f"    [SPSA] loss+={loss_plus:.6f}, loss-={loss_minus:.6f}, diff={loss_plus-loss_minus:.6f}", flush=True)
+    diff = loss_plus - loss_minus
+    print(f"    [SPSA] loss+={loss_plus:.6f}, loss-={loss_minus:.6f}, diff={diff:.6f}", flush=True)
     print(f"    [SPSA] acc+={acc_plus:.2%}, acc-={acc_minus:.2%}", flush=True)
     print(f"    [SPSA] w_perturb: ±{c_W:.4f}, β_perturb: ±{c_beta:.6f}, vth_perturb: ±{c_vth:.4f}", flush=True)
 
+    # diff 阈值检查 (与 exp13 对齐)
+    if abs(diff) < 1e-15:
+        print(f"    [SPSA] diff < 1e-15, 恢复原参数", flush=True)
+        _set_weight_floats(model, w1_orig, w2_orig)
+        _set_lif_params(model, beta_orig, vth_orig)
+        loss, acc = evaluate_model(model, labels, device, max_samples=max_samples, precomputed_pulses=precomputed_pulses, phase='train', verbose=False)
+        return loss, acc, momentum_buf
+
     # 梯度估计
-    grad_W = (loss_plus - loss_minus) / (2 * c_W) * delta_W
-    grad_beta = (loss_plus - loss_minus) / (2 * c_beta) * delta_beta
-    grad_vth = (loss_plus - loss_minus) / (2 * c_vth) * delta_vth
+    grad_W = diff / (2 * c_W) * (1.0 / delta_W)
+    grad_beta = diff / (2 * c_beta) * (1.0 / delta_beta)
+    grad_vth = diff / (2 * c_vth) * (1.0 / delta_vth)
 
     print(f"    [SPSA] grad_W: mean={grad_W.abs().mean():.6f}, max={grad_W.abs().max():.6f}", flush=True)
 
@@ -295,22 +315,24 @@ def spsa_step_anisotropic(model, labels, device, precomputed_pulses,
     grad_beta = torch.clamp(grad_beta, -GRAD_CLIP, GRAD_CLIP)
     grad_vth = torch.clamp(grad_vth, -GRAD_CLIP, GRAD_CLIP)
 
-    # 动量更新
+    # 动量更新 (与 exp13 对齐)
     if momentum_buf is None:
+        # 第一次：直接用当前梯度初始化
         momentum_buf = {
-            'W': torch.zeros_like(w_flat),
-            'beta': torch.zeros_like(all_beta),
-            'vth': torch.zeros_like(all_vth)
+            'W': grad_W.clone(),
+            'beta': grad_beta.clone(),
+            'vth': grad_vth.clone()
         }
+    else:
+        # EMA 风格动量
+        momentum_buf['W'] = mu * momentum_buf['W'] + (1 - mu) * grad_W
+        momentum_buf['beta'] = mu * momentum_buf['beta'] + (1 - mu) * grad_beta
+        momentum_buf['vth'] = mu * momentum_buf['vth'] + (1 - mu) * grad_vth
 
-    momentum_buf['W'] = mu * momentum_buf['W'] + grad_W
-    momentum_buf['beta'] = mu * momentum_buf['beta'] + grad_beta
-    momentum_buf['vth'] = mu * momentum_buf['vth'] + grad_vth
-
-    # 参数更新
-    new_W = w_flat - a_W * momentum_buf['W']
-    new_beta = all_beta - a_beta * momentum_buf['beta']
-    new_vth = all_vth - a_vth * momentum_buf['vth']
+    # 参数更新 - 基于原始值，而非被扰动修改后的值
+    new_W = w_flat_orig - a_W * momentum_buf['W']
+    new_beta = beta_orig - a_beta * momentum_buf['beta']
+    new_vth = vth_orig - a_vth * momentum_buf['vth']
 
     w1_new = new_W[:w1_shape[0]*w1_shape[1]].view(w1_shape)
     w2_new = new_W[w1_shape[0]*w1_shape[1]:].view(w2_shape)
@@ -375,7 +397,7 @@ def train_sequential_mnist():
     # 初始化 β 和 V_th
     for module in model.modules():
         if isinstance(module, SimpleLIFNode) and hasattr(module, '_beta'):
-            module._beta.data.uniform_(0.01, 0.02)
+            module._beta.data.uniform_(0.01, 0.02)  # 原始初始值，让训练来调整
             module._v_threshold.data.normal_(1.0, 0.4).clamp_(0.5, 1.5)
 
     # 获取参数信息
@@ -421,9 +443,17 @@ def train_sequential_mnist():
     for epoch in range(1, N_EPOCHS + 1):
         t0 = time.time()
 
+        # 学习率衰减 (与 exp13 对齐)
+        c_W_k = C_W / (epoch + 1) ** GAMMA_SPSA
+        c_beta_k = C_BETA / (epoch + 1) ** GAMMA_SPSA
+        c_vth_k = C_VTH / (epoch + 1) ** GAMMA_SPSA
+        a_W_k = A_W / (epoch + 1) ** ALPHA
+        a_beta_k = A_BETA / (epoch + 1) ** ALPHA
+        a_vth_k = A_VTH / (epoch + 1) ** ALPHA
+
         loss, acc, momentum_buf = spsa_step_anisotropic(
             model, train_labels, DEVICE, train_pulse,
-            C_W, C_BETA, C_VTH, A_W, A_BETA, A_VTH,
+            c_W_k, c_beta_k, c_vth_k, a_W_k, a_beta_k, a_vth_k,
             w1_shape, w2_shape, n_beta, n_vth,
             momentum_buf, MOMENTUM,
             max_samples=min(50, N_TRAIN_SAMPLES)  # 每步用部分样本估计梯度
