@@ -114,15 +114,17 @@ class SimpleIFNode(nn.Module):
         # 预分配模式：参数已在 __init__ 中创建，根据输入位宽切片
         input_bits = x.shape[-1] if x.dim() > 0 else 1
         batch_shape = x.shape[:-1]
-        # 从预分配的 buffer 切片（设备已通过 .to() 正确设置）
-        threshold = self._v_threshold[..., :input_bits]
+        device = x.device  # 使用输入的设备
+
+        # 从预分配的 buffer 切片，确保在正确设备上
+        threshold = self._v_threshold[..., :input_bits].to(device)
 
         # 膜电位：batch 维度动态，bits 维度预分配切片
-        # 使用 _v_threshold 的设备确保一致性
+        # 使用输入 x 的设备确保一致性
         max_bits = self.max_param_shape[-1]
-        if self.v is None or self.v.shape[:-1] != batch_shape:
+        if self.v is None or self.v.shape[:-1] != batch_shape or self.v.device != device:
             self.v = torch.zeros(*batch_shape, max_bits,
-                                 device=self._v_threshold.device,
+                                 device=device,
                                  dtype=x.dtype)
 
         # 切片到当前 bits
@@ -302,16 +304,18 @@ class SimpleLIFNode(nn.Module):
         # 预分配模式：参数已在 __init__ 中创建，根据输入位宽切片
         input_bits = x.shape[-1] if x.dim() > 0 else 1
         batch_shape = x.shape[:-1]
-        # 从预分配的 buffer 切片（设备已通过 .to() 正确设置）
-        beta = self._beta[..., :input_bits]
-        threshold = self._v_threshold[..., :input_bits]
+        device = x.device  # 使用输入的设备
+
+        # 从预分配的 buffer 切片，确保在正确设备上
+        beta = self._beta[..., :input_bits].to(device)
+        threshold = self._v_threshold[..., :input_bits].to(device)
 
         # 膜电位：batch 维度动态，bits 维度预分配切片
-        # 使用 _v_threshold 的设备确保一致性
+        # 使用输入 x 的设备确保一致性
         max_bits = self.max_param_shape[-1]
-        if self.v is None or self.v.shape[:-1] != batch_shape:
+        if self.v is None or self.v.shape[:-1] != batch_shape or self.v.device != device:
             self.v = torch.zeros(*batch_shape, max_bits,
-                                 device=self._v_threshold.device,
+                                 device=device,
                                  dtype=x.dtype)
 
         # 切片到当前 bits
