@@ -211,6 +211,87 @@ def compute_spectral_radius(model):
 
 
 # ============================================================
+# 检查点保存
+# ============================================================
+CKPT_DIR = os.path.join(os.path.dirname(__file__), 'exp14_ecg_checkpoints')
+os.makedirs(CKPT_DIR, exist_ok=True)
+
+
+def save_checkpoint(model, epoch, loss, acc, trajectory, prefix='epoch'):
+    """保存模型检查点"""
+    w1, w2 = _get_weight_floats(model)
+    beta, vth = _get_lif_params(model)
+    ckpt = {
+        'epoch': epoch,
+        'loss': loss,
+        'acc': acc,
+        'weights': {
+            'w1': w1.cpu().numpy().tolist(),
+            'w2': w2.cpu().numpy().tolist(),
+        },
+        'lif_params': {
+            'beta': beta.cpu().numpy().tolist(),
+            'vth': vth.cpu().numpy().tolist(),
+        },
+        'trajectory_so_far': trajectory,
+    }
+    ckpt_path = os.path.join(CKPT_DIR, f'{prefix}_epoch{epoch:03d}.json')
+    with open(ckpt_path, 'w') as f:
+        json.dump(ckpt, f, indent=2)
+    print(f"    [ckpt] Saved to {ckpt_path}", flush=True)
+
+
+def load_checkpoint(model, ckpt_path, device):
+    """加载模型检查点
+
+    Args:
+        model: 要加载参数的模型
+        ckpt_path: 检查点文件路径
+        device: 目标设备
+
+    Returns:
+        epoch: 恢复的epoch
+        trajectory: 恢复的训练轨迹
+    """
+    with open(ckpt_path, 'r') as f:
+        ckpt = json.load(f)
+
+    # 恢复权重
+    w1 = torch.tensor(ckpt['weights']['w1'], dtype=torch.float32, device=device)
+    w2 = torch.tensor(ckpt['weights']['w2'], dtype=torch.float32, device=device)
+    _set_weight_floats(model, w1, w2)
+
+    # 恢复LIF参数
+    beta = torch.tensor(ckpt['lif_params']['beta'], dtype=torch.float32, device=device)
+    vth = torch.tensor(ckpt['lif_params']['vth'], dtype=torch.float32, device=device)
+    _set_lif_params(model, beta, vth)
+
+    print(f"    [ckpt] Loaded from {ckpt_path}", flush=True)
+    print(f"    [ckpt] Epoch={ckpt['epoch']}, Loss={ckpt['loss']:.4f}, Acc={ckpt['acc']:.2%}", flush=True)
+
+    return ckpt['epoch'], ckpt['trajectory_so_far']
+
+
+def find_latest_checkpoint():
+    """查找最新的检查点
+
+    Returns:
+        ckpt_path: 最新检查点路径，如果没有返回None
+    """
+    import glob
+    ckpt_files = glob.glob(os.path.join(CKPT_DIR, 'epoch_epoch*.json'))
+    if not ckpt_files:
+        # 尝试找init检查点
+        init_ckpt = os.path.join(CKPT_DIR, 'init_epoch000.json')
+        if os.path.exists(init_ckpt):
+            return init_ckpt
+        return None
+    # 按epoch编号排序，返回最新的
+    ckpt_files.sort()
+    return ckpt_files[-1]
+
+
+# ============================================================
 # 评估函数
 # ============================================================
 def evaluate_model(model, labels, device, precomputed_pulses, phase='train', verbose=False):
@@ -448,6 +529,9 @@ def train_ecg_timeseries():
         'test_acc': [],
     }
 
+    # 保存初始检查点
+    save_checkpoint(model, 0, loss0, acc0, trajectory, prefix='init')
+
     # 训练循环
     momentum_buf = None
     import time
@@ -513,6 +597,9 @@ def train_ecg_timeseries():
             trajectory['test_loss'].append(test_loss)
             trajectory['test_acc'].append(test_acc)
             print(f"  [test] Ep {epoch}: Loss={test_loss:.4f}, Acc={test_acc:.2%}", flush=True)
+
+        # 每个epoch都保存检查点
+        save_checkpoint(model, epoch, loss, acc, trajectory, prefix='epoch')
 
     # 最终测试
     print("\n" + "=" * 70)
