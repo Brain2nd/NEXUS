@@ -86,7 +86,7 @@ class SpikeFP32LayerNorm(nn.Module):
         self.accumulator_mean = create_accumulator(self.fp64_adder_sum, mode=accumulator_mode)
         self.accumulator_var = create_accumulator(self.fp64_adder_var_sum, mode=accumulator_mode)
 
-        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
     def forward(self, x):
         """

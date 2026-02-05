@@ -52,24 +52,28 @@ from atomic_ops.arithmetic.fp32.fp32_adder import SpikeFP32Adder
 
 class SpikeFP32ExtractLow5(nn.Module):
     """从 [0, 31] 范围的 FP32 整数中提取 5-bit 二进制脉冲
-    
+
     输入: x (FP32脉冲, 值在0-31之间)
     输出: 5-bit 脉冲 [b4, b3, b2, b1, b0] (MSB first)
     """
     def __init__(self, neuron_template=None):
         super().__init__()
         nt = neuron_template
+
+        max_shape_8 = (8,)
+        max_shape_1 = (1,)
+
         # E检测: E=127..131 - 单实例
-        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.exp_sub = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 输出逻辑门 - 单实例
-        self.b_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.b_or = ORGate(neuron_template=nt, max_param_shape=(1,))
+        self.b_and = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
+        self.b_or = ORGate(neuron_template=nt, max_param_shape=max_shape_1)
 
-        # shift 解码器 - 单实例
-        self.shift_is_zero = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.shift_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        # shift 解码器 - 单实例 (shift_is_zero 处理 8 位)
+        self.shift_is_zero = NOTGate(neuron_template=nt, max_param_shape=max_shape_8)
+        self.shift_and = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
         
     def forward(self, x):
         device = x.device
@@ -251,37 +255,42 @@ class SpikeFP32Floor(nn.Module):
         super().__init__()
         nt = neuron_template
 
+        # FP32: 8 位指数
+        max_shape_8 = (8,)
+        max_shape_1 = (1,)
+
         # 指数减法器 (E - 127) - 单实例
-        self.exp_sub_127 = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not_127 = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.exp_sub_127 = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.exp_not_127 = NOTGate(neuron_template=nt, max_param_shape=max_shape_8)
 
         # 比较器: E < 127 (即 x < 1) - 单实例
-        self.lt_127_detect = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.lt_127_detect = NOTGate(neuron_template=nt, max_param_shape=max_shape_1)
 
-        # 比较器: E >= 150 (即无小数) - 单实例
-        self.ge_150_detect = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        # 比较器: E >= 150 (即无小数) - 单实例 (也处理 8 位常量)
+        self.ge_150_detect = NOTGate(neuron_template=nt, max_param_shape=max_shape_8)
 
-        # 尾数清零 - 单实例
-        self.mant_lt_cmp = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.mant_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.mant_lt_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.mant_borrow_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        # 尾数清零 - 单实例 (mant_lt_not 处理 8 位阈值)
+        self.mant_lt_cmp = FullAdder(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_mux = MUXGate(neuron_template=nt, max_param_shape=max_shape_1)
+        self.mant_lt_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_8)
+        self.mant_borrow_not = NOTGate(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 检测是否有小数部分 - 单实例
-        self.frac_or = ORGate(neuron_template=nt, max_param_shape=(1,))
-        self.frac_and_sign = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.frac_and_mant = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        self.frac_or = ORGate(neuron_template=nt, max_param_shape=max_shape_1)
+        self.frac_and_sign = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
+        self.frac_and_mant = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
 
         # 使用FP32加法器实现减1
         self.fp32_adder = SpikeFP32Adder(neuron_template=nt)
 
         # 负数有小数的组合检测
-        self.neg_has_frac_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        self.neg_has_frac_and = ANDGate(neuron_template=nt, max_param_shape=max_shape_1)
 
-        # 结果选择MUX - 单实例
-        self.lt1_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.ge150_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.neg_frac_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
+        # 结果选择MUX - 处理 32 位 FP32 脉冲
+        max_shape_32 = (32,)
+        self.lt1_mux = MUXGate(neuron_template=nt, max_param_shape=max_shape_32)
+        self.ge150_mux = MUXGate(neuron_template=nt, max_param_shape=max_shape_32)
+        self.neg_frac_mux = MUXGate(neuron_template=nt, max_param_shape=max_shape_32)
         
     def _make_constant(self, bits, batch_shape, device):
         pulse = torch.zeros(batch_shape + (32,), device=device)
@@ -413,33 +422,33 @@ class SpikeFP32ScaleBy2K(nn.Module):
         super().__init__()
         nt = neuron_template
         # E - 127 - 单实例
-        self.exp_sub_127 = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.exp_not_127 = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.exp_sub_127 = FullAdder(neuron_template=nt, max_param_shape=None)
+        self.exp_not_127 = NOTGate(neuron_template=nt, max_param_shape=None)
 
         # k_mant << shift (Barrel Shifter) - 单实例
-        self.shift_layer0 = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.shift_layer1 = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.shift_layer2 = MUXGate(neuron_template=nt, max_param_shape=(1,))
+        self.shift_layer0 = MUXGate(neuron_template=nt, max_param_shape=None)
+        self.shift_layer1 = MUXGate(neuron_template=nt, max_param_shape=None)
+        self.shift_layer2 = MUXGate(neuron_template=nt, max_param_shape=None)
 
         # sign(k)处理 - 单实例
-        self.neg_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.neg_add = FullAdder(neuron_template=nt, max_param_shape=(1,))
-        self.sign_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
+        self.neg_not = NOTGate(neuron_template=nt, max_param_shape=None)
+        self.neg_add = FullAdder(neuron_template=nt, max_param_shape=None)
+        self.sign_mux = MUXGate(neuron_template=nt, max_param_shape=None)
 
         # 结果相加 (E + k_int) - 单实例
-        self.exp_add = FullAdder(neuron_template=nt, max_param_shape=(1,))
+        self.exp_add = FullAdder(neuron_template=nt, max_param_shape=None)
 
         # 溢出处理 - 简单clamp - 单实例
-        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.exp_not = NOTGate(neuron_template=nt, max_param_shape=None)
 
         # K是否为0检测 - 单实例
-        self.k_exp_zero_or = ORGate(neuron_template=nt, max_param_shape=(1,))
-        self.k_exp_zero_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.k_mant_zero_or = ORGate(neuron_template=nt, max_param_shape=(1,))
-        self.k_mant_zero_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.k_is_zero_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
+        self.k_exp_zero_or = ORGate(neuron_template=nt, max_param_shape=None)
+        self.k_exp_zero_not = NOTGate(neuron_template=nt, max_param_shape=None)
+        self.k_mant_zero_or = ORGate(neuron_template=nt, max_param_shape=None)
+        self.k_mant_zero_not = NOTGate(neuron_template=nt, max_param_shape=None)
+        self.k_is_zero_and = ANDGate(neuron_template=nt, max_param_shape=None)
 
-        self.zero_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
+        self.zero_mux = MUXGate(neuron_template=nt, max_param_shape=None)
         
     def forward(self, x, k):
         device = x.device
@@ -600,8 +609,8 @@ class SpikeFP32Exp(nn.Module):
         self.mul_z_ln2_lo = SpikeFP32Multiplier(neuron_template=nt)
         self.sub_hi = SpikeFP32Adder(neuron_template=nt)
         self.sub_lo = SpikeFP32Adder(neuron_template=nt)
-        self.sign_not_hi = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.sign_not_lo = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not_hi = NOTGate(neuron_template=nt, max_param_shape=None)
+        self.sign_not_lo = NOTGate(neuron_template=nt, max_param_shape=None)
         
         # 多项式 P(r) = 1 + r + C2*r^2 + C3*r^3
         # Horner: 1 + r*(1 + r*(C2 + r*C3))
@@ -624,23 +633,23 @@ class SpikeFP32Exp(nn.Module):
         
         # 计算 j = z % 32
         self.mul_32 = SpikeFP32Multiplier(neuron_template=nt)
-        self.sign_not_j = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.sign_not_j = NOTGate(neuron_template=nt, max_param_shape=None)
         self.sub_j = SpikeFP32Adder(neuron_template=nt)
 
         self.scale = SpikeFP32ScaleBy2K(neuron_template=nt)
 
         # 特殊值 - 单实例
-        self.exp_all_one_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.mant_zero_or = ORGate(neuron_template=nt, max_param_shape=(1,))
-        self.mant_zero_not = NOTGate(neuron_template=nt, max_param_shape=(1,))
-        self.is_nan_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.is_pos_inf_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.is_neg_inf_and = ANDGate(neuron_template=nt, max_param_shape=(1,))
-        self.sign_not2 = NOTGate(neuron_template=nt, max_param_shape=(1,))
+        self.exp_all_one_and = ANDGate(neuron_template=nt, max_param_shape=None)
+        self.mant_zero_or = ORGate(neuron_template=nt, max_param_shape=None)
+        self.mant_zero_not = NOTGate(neuron_template=nt, max_param_shape=None)
+        self.is_nan_and = ANDGate(neuron_template=nt, max_param_shape=None)
+        self.is_pos_inf_and = ANDGate(neuron_template=nt, max_param_shape=None)
+        self.is_neg_inf_and = ANDGate(neuron_template=nt, max_param_shape=None)
+        self.sign_not2 = NOTGate(neuron_template=nt, max_param_shape=None)
 
-        self.nan_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.inf_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
-        self.zero_mux = MUXGate(neuron_template=nt, max_param_shape=(1,))
+        self.nan_mux = MUXGate(neuron_template=nt, max_param_shape=None)
+        self.inf_mux = MUXGate(neuron_template=nt, max_param_shape=None)
+        self.zero_mux = MUXGate(neuron_template=nt, max_param_shape=None)
         
     def _make_constant(self, hex_val, batch_shape, device):
         pulse = torch.zeros(batch_shape + (32,), device=device)

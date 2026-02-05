@@ -506,14 +506,14 @@ class FP8ToFP32Converter(nn.Module):
         max_shape_1 = (1,)
 
         # 检测 FP8 E=0
-        self.e_or_01 = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.e_or_23 = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.e_or_all = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.e_is_zero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.e_or_01 = VecOR(neuron_template=nt, max_param_shape=None)
+        self.e_or_23 = VecOR(neuron_template=nt, max_param_shape=None)
+        self.e_or_all = VecOR(neuron_template=nt, max_param_shape=None)
+        self.e_is_zero_not = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # 检测 M≠0 (纯 SNN OR 门)
-        self.m_or_01 = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.m_or_all = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.m_or_01 = VecOR(neuron_template=nt, max_param_shape=None)
+        self.m_or_all = VecOR(neuron_template=nt, max_param_shape=None)
 
         # 8位加法器: FP8_exp (4位扩展) + 120
         # 120 = 0b01111000
@@ -707,17 +707,17 @@ class FP32ToFP8Converter(nn.Module):
         self.underflow_cmp = Comparator8Bit(neuron_template=nt)
 
         # RNE 舍入
-        self.rne_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.rne_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.rne_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.rne_and = VecAND(neuron_template=nt, max_param_shape=None)
 
         # Sticky bit OR（单实例）
-        self.sticky_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.sticky_or = VecOR(neuron_template=nt, max_param_shape=None)
 
         # 尾数 +1 (4位: 包含进位检测)
         self.mant_inc = VecAdder(bits=4, neuron_template=nt, max_param_shape=(4,))
 
         # 尾数清零（舍入进位时）
-        self.not_carry = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_carry = VecNOT(neuron_template=nt, max_param_shape=None)
         self.vec_mant_clear_and = VecAND(neuron_template=nt, max_param_shape=max_shape_3)  # 向量化：3位并行
 
         # 指数+1（舍入进位时）
@@ -743,82 +743,82 @@ class FP32ToFP8Converter(nn.Module):
         
         # ===== 纯 SNN 门电路替换比较运算 =====
         # Subnormal 处理的 sticky bit OR（单实例）
-        self.sticky_120_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.sticky_119_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.sticky_118_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.sticky_120_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.sticky_119_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.sticky_118_or = VecOR(neuron_template=nt, max_param_shape=None)
         # mant_is_zero_117: 检测 23 位尾数是否全 0
-        self.mant_117_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.mant_117_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.mant_117_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.mant_117_not = VecNOT(neuron_template=nt, max_param_shape=None)
         
         # 进位检测 (A+B 的进位 = A AND B)
-        self.sub_m2_120_carry_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m1_120_carry_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m2_119_carry_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m1_119_carry_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m2_118_carry_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.sub_m2_120_carry_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.sub_m1_120_carry_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.sub_m2_119_carry_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.sub_m1_119_carry_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.sub_m2_118_carry_and = VecAND(neuron_template=nt, max_param_shape=None)
         
         # XOR 门用于 sum % 2 (A + B - 2*A*B = A XOR B)
-        self.sub_m2_120_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m1_120_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m2_119_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m1_119_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
-        self.sub_m2_118_xor = VecXOR(neuron_template=nt, max_param_shape=(1,))
+        self.sub_m2_120_xor = VecXOR(neuron_template=nt, max_param_shape=None)
+        self.sub_m1_120_xor = VecXOR(neuron_template=nt, max_param_shape=None)
+        self.sub_m2_119_xor = VecXOR(neuron_template=nt, max_param_shape=None)
+        self.sub_m1_119_xor = VecXOR(neuron_template=nt, max_param_shape=None)
+        self.sub_m2_118_xor = VecXOR(neuron_template=nt, max_param_shape=None)
         
         # ===== 纯 SNN NOT 门 (替换 ones - x) =====
-        self.not_exp_ge_117 = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_exp_lsb0 = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_exp_lsb1 = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_exp_lsb2 = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_mant_is_zero_117 = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.not_subnorm_overflow = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_exp_ge_117 = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_exp_lsb0 = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_exp_lsb1 = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_exp_lsb2 = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_mant_is_zero_117 = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.not_subnorm_overflow = VecNOT(neuron_template=nt, max_param_shape=None)
         
         # ===== 纯 SNN OR 门 (替换 a+b-a*b) =====
-        self.s_or_l_120_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.s_or_l_119_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.s_or_l_118_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.exp_ge_or_eq_117_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.s_or_l_120_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.s_or_l_119_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.s_or_l_118_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.exp_ge_or_eq_117_or = VecOR(neuron_template=nt, max_param_shape=None)
         
         # ===== 纯 SNN AND 门 (替换 a*b) =====
-        self.and_is_subnormal = VecAND(neuron_template=nt, max_param_shape=(1,))  # is_below_normal AND exp_ge_117
-        self.and_is_underflow = VecAND(neuron_template=nt, max_param_shape=(1,))  # is_below_normal AND not_exp_ge_117
-        self.and_subnorm_exp_val = VecAND(neuron_template=nt, max_param_shape=(1,))  # for subnorm_overflow selection
+        self.and_is_subnormal = VecAND(neuron_template=nt, max_param_shape=None)  # is_below_normal AND exp_ge_117
+        self.and_is_underflow = VecAND(neuron_template=nt, max_param_shape=None)  # is_below_normal AND not_exp_ge_117
+        self.and_subnorm_exp_val = VecAND(neuron_template=nt, max_param_shape=None)  # for subnorm_overflow selection
 
         # ===== 纯 SNN MUX 门 (选择 subnorm 指数) - 向量化 =====
         self.vec_subnorm_exp_mux = VecMUX(neuron_template=nt, max_param_shape=(4,))  # 4位并行
 
         # ===== 纯 SNN AND 门 (is_exp_117/118/119/120 计算) =====
-        self.and_exp_117_a = VecAND(neuron_template=nt, max_param_shape=(1,))  # exp_lsb0 AND not_exp_lsb1
-        self.and_exp_117_b = VecAND(neuron_template=nt, max_param_shape=(1,))  # (exp_lsb0 AND not_exp_lsb1) AND exp_lsb2
-        self.and_exp_118_a = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_exp_lsb0 AND exp_lsb1
-        self.and_exp_118_b = VecAND(neuron_template=nt, max_param_shape=(1,))  # (not_exp_lsb0 AND exp_lsb1) AND exp_lsb2
-        self.and_exp_119_a = VecAND(neuron_template=nt, max_param_shape=(1,))  # exp_lsb0 AND exp_lsb1
-        self.and_exp_119_b = VecAND(neuron_template=nt, max_param_shape=(1,))  # (exp_lsb0 AND exp_lsb1) AND exp_lsb2
-        self.and_exp_120_a = VecAND(neuron_template=nt, max_param_shape=(1,))  # not_exp_lsb0 AND not_exp_lsb1
-        self.and_exp_120_b = VecAND(neuron_template=nt, max_param_shape=(1,))  # above AND not_exp_lsb2
-        self.and_exp_120_c = VecAND(neuron_template=nt, max_param_shape=(1,))  # above AND exp_lsb3
+        self.and_exp_117_a = VecAND(neuron_template=nt, max_param_shape=None)  # exp_lsb0 AND not_exp_lsb1
+        self.and_exp_117_b = VecAND(neuron_template=nt, max_param_shape=None)  # (exp_lsb0 AND not_exp_lsb1) AND exp_lsb2
+        self.and_exp_118_a = VecAND(neuron_template=nt, max_param_shape=None)  # not_exp_lsb0 AND exp_lsb1
+        self.and_exp_118_b = VecAND(neuron_template=nt, max_param_shape=None)  # (not_exp_lsb0 AND exp_lsb1) AND exp_lsb2
+        self.and_exp_119_a = VecAND(neuron_template=nt, max_param_shape=None)  # exp_lsb0 AND exp_lsb1
+        self.and_exp_119_b = VecAND(neuron_template=nt, max_param_shape=None)  # (exp_lsb0 AND exp_lsb1) AND exp_lsb2
+        self.and_exp_120_a = VecAND(neuron_template=nt, max_param_shape=None)  # not_exp_lsb0 AND not_exp_lsb1
+        self.and_exp_120_b = VecAND(neuron_template=nt, max_param_shape=None)  # above AND not_exp_lsb2
+        self.and_exp_120_c = VecAND(neuron_template=nt, max_param_shape=None)  # above AND exp_lsb3
 
         # ===== 纯 SNN AND 门 (round_up 计算) =====
-        self.and_round_up_120 = VecAND(neuron_template=nt, max_param_shape=(1,))  # round_120 AND s_or_l_120
-        self.and_round_up_119 = VecAND(neuron_template=nt, max_param_shape=(1,))  # round_119 AND s_or_l_119
-        self.and_round_up_118 = VecAND(neuron_template=nt, max_param_shape=(1,))  # round_118 AND s_or_l_118
+        self.and_round_up_120 = VecAND(neuron_template=nt, max_param_shape=None)  # round_120 AND s_or_l_120
+        self.and_round_up_119 = VecAND(neuron_template=nt, max_param_shape=None)  # round_119 AND s_or_l_119
+        self.and_round_up_118 = VecAND(neuron_template=nt, max_param_shape=None)  # round_118 AND s_or_l_118
 
         # ===== 纯 SNN AND 门 (subnorm_overflow 计算) =====
-        self.and_subnorm_overflow = VecAND(neuron_template=nt, max_param_shape=(1,))  # is_exp_120 AND sub_to_normal_120
+        self.and_subnorm_overflow = VecAND(neuron_template=nt, max_param_shape=None)  # is_exp_120 AND sub_to_normal_120
 
         # ===== 纯 SNN MUX 门 (subnorm_m 选择)（单实例）=====
-        self.mux_subnorm_m0 = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.mux_subnorm_m1 = VecMUX(neuron_template=nt, max_param_shape=(1,))
-        self.mux_subnorm_m2 = VecMUX(neuron_template=nt, max_param_shape=(1,))
+        self.mux_subnorm_m0 = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.mux_subnorm_m1 = VecMUX(neuron_template=nt, max_param_shape=None)
+        self.mux_subnorm_m2 = VecMUX(neuron_template=nt, max_param_shape=None)
 
         # ===== AND 门用于 subnorm_m 的最终选择 =====
-        self.and_subnorm_m0 = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.and_subnorm_m1 = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.and_subnorm_m2 = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.and_subnorm_m0 = VecAND(neuron_template=nt, max_param_shape=None)
+        self.and_subnorm_m1 = VecAND(neuron_template=nt, max_param_shape=None)
+        self.and_subnorm_m2 = VecAND(neuron_template=nt, max_param_shape=None)
 
         # ===== 纯 SNN AND 门 (subnorm 尾数清零) =====
-        self.and_subnorm_m0 = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.and_subnorm_m1 = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.and_subnorm_m2 = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.and_subnorm_m0 = VecAND(neuron_template=nt, max_param_shape=None)
+        self.and_subnorm_m1 = VecAND(neuron_template=nt, max_param_shape=None)
+        self.and_subnorm_m2 = VecAND(neuron_template=nt, max_param_shape=None)
         
     def forward(self, fp32_pulse):
         """
@@ -1207,20 +1207,20 @@ class FP32ToFP16Converter(nn.Module):
         self.underflow_cmp = Comparator8Bit(neuron_template=nt)
         
         # NaN/Inf检测（单实例）
-        self.nan_exp_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.nan_mant_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.is_nan_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.mant_zero_not = VecNOT(neuron_template=nt, max_param_shape=(1,))
-        self.is_inf_and = VecAND(neuron_template=nt, max_param_shape=(1,))
+        self.nan_exp_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.nan_mant_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.is_nan_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.mant_zero_not = VecNOT(neuron_template=nt, max_param_shape=None)
+        self.is_inf_and = VecAND(neuron_template=nt, max_param_shape=None)
 
         # RNE舍入（单实例）
-        self.rne_or = VecOR(neuron_template=nt, max_param_shape=(1,))
-        self.rne_and = VecAND(neuron_template=nt, max_param_shape=(1,))
-        self.sticky_or = VecOR(neuron_template=nt, max_param_shape=(1,))
+        self.rne_or = VecOR(neuron_template=nt, max_param_shape=None)
+        self.rne_and = VecAND(neuron_template=nt, max_param_shape=None)
+        self.sticky_or = VecOR(neuron_template=nt, max_param_shape=None)
         
         # 尾数+1
         self.mant_inc = RippleCarryAdderNBit(bits=11, neuron_template=nt)
-        self.not_carry = VecNOT(neuron_template=nt, max_param_shape=(1,))
+        self.not_carry = VecNOT(neuron_template=nt, max_param_shape=None)
 
         # 指数+1
         self.exp_inc = RippleCarryAdderNBit(bits=5, neuron_template=nt)
