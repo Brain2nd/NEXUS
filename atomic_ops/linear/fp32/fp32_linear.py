@@ -206,12 +206,19 @@ class SpikeFP32Linear_MultiPrecision(nn.Module):
             with torch.no_grad():
                 self._weight_pulse_float.copy_(weight_pulse)
         else:
-            # 推理模式：从已有 buffer 推断设备
+            # 推理模式：从模型参数/buffer 推断设备
             device = weight_float.device
-            for buf in self.buffers():
-                if buf is not None:
-                    device = buf.device
+            # 优先从子模块的参数获取设备（更可靠）
+            for param in self.parameters():
+                if param is not None:
+                    device = param.device
                     break
+            else:
+                # 回退：从 buffer 获取
+                for buf in self.buffers():
+                    if buf is not None:
+                        device = buf.device
+                        break
             weight_pulse = float32_to_pulse(weight_float, device=device)
             self._weight_pulse_bool = (weight_pulse > 0.5).bool()
 

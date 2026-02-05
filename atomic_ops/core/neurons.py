@@ -120,12 +120,23 @@ class SimpleIFNode(nn.Module):
         threshold = self._v_threshold[..., :input_bits].to(device)
 
         # 膜电位：batch 维度动态，bits 维度预分配切片
-        # 使用输入 x 的设备确保一致性
+        # 预加载切片机制：batch 变化时复制扩张，不丢失状态
         max_bits = self.max_param_shape[-1]
-        if self.v is None or self.v.shape[:-1] != batch_shape or self.v.device != device:
-            self.v = torch.zeros(*batch_shape, max_bits,
-                                 device=device,
-                                 dtype=x.dtype)
+        if self.v is None:
+            # 首次创建
+            self.v = torch.zeros(*batch_shape, max_bits, device=device, dtype=x.dtype)
+        elif self.v.device != device:
+            # 设备不匹配：移动到正确设备
+            self.v = self.v.to(device)
+        if self.v.shape[:-1] != batch_shape:
+            # batch 维度变化：复制扩张（保留已有状态）
+            new_v = torch.zeros(*batch_shape, max_bits, device=device, dtype=x.dtype)
+            # 计算可复制的最小 batch 范围
+            old_shape = self.v.shape[:-1]
+            min_dims = min(len(old_shape), len(batch_shape))
+            slices = tuple(slice(0, min(old_shape[i], batch_shape[i])) for i in range(min_dims))
+            new_v[slices] = self.v[slices]
+            self.v = new_v
 
         # 切片到当前 bits
         v = self.v[..., :input_bits]
@@ -144,6 +155,10 @@ class SimpleIFNode(nn.Module):
             # 硬复位
             reset_val = torch.full_like(v, self.v_reset)
             v.copy_(torch.where(spike > 0, reset_val, v))
+
+        # 确保输出在输入设备上（防止设备不一致）
+        if spike.device != device:
+            spike = spike.to(device)
 
         return spike
 
@@ -311,12 +326,23 @@ class SimpleLIFNode(nn.Module):
         threshold = self._v_threshold[..., :input_bits].to(device)
 
         # 膜电位：batch 维度动态，bits 维度预分配切片
-        # 使用输入 x 的设备确保一致性
+        # 预加载切片机制：batch 变化时复制扩张，不丢失状态
         max_bits = self.max_param_shape[-1]
-        if self.v is None or self.v.shape[:-1] != batch_shape or self.v.device != device:
-            self.v = torch.zeros(*batch_shape, max_bits,
-                                 device=device,
-                                 dtype=x.dtype)
+        if self.v is None:
+            # 首次创建
+            self.v = torch.zeros(*batch_shape, max_bits, device=device, dtype=x.dtype)
+        elif self.v.device != device:
+            # 设备不匹配：移动到正确设备
+            self.v = self.v.to(device)
+        if self.v.shape[:-1] != batch_shape:
+            # batch 维度变化：复制扩张（保留已有状态）
+            new_v = torch.zeros(*batch_shape, max_bits, device=device, dtype=x.dtype)
+            # 计算可复制的最小 batch 范围
+            old_shape = self.v.shape[:-1]
+            min_dims = min(len(old_shape), len(batch_shape))
+            slices = tuple(slice(0, min(old_shape[i], batch_shape[i])) for i in range(min_dims))
+            new_v[slices] = self.v[slices]
+            self.v = new_v
 
         # 切片到当前 bits
         v = self.v[..., :input_bits]
@@ -335,6 +361,10 @@ class SimpleLIFNode(nn.Module):
             # 硬复位
             reset_val = torch.full_like(v, self.v_reset)
             v.copy_(torch.where(spike > 0, reset_val, v))
+
+        # 确保输出在输入设备上（防止设备不一致）
+        if spike.device != device:
+            spike = spike.to(device)
 
         return spike
 
