@@ -322,26 +322,40 @@ class SimpleLIFNode(nn.Module):
         device = x.device  # 使用输入的设备
 
         # 从预分配的 buffer 切片，确保在正确设备上
-        beta = self._beta[..., :input_bits].to(device)
-        threshold = self._v_threshold[..., :input_bits].to(device)
-
-        # 膜电位：batch 维度动态，bits 维度预分配切片
-        # 预加载切片机制：batch 变化时复制扩张，不丢失状态
+        # 如果 input_bits > max_param_shape，需要广播参数
         max_bits = self.max_param_shape[-1]
+        if input_bits <= max_bits:
+            beta = self._beta[..., :input_bits].to(device)
+            threshold = self._v_threshold[..., :input_bits].to(device)
+        else:
+            # input_bits 超过预分配大小，需要广播扩展
+            # 使用预分配参数的值进行广播
+            beta = self._beta.to(device).expand(*([1] * (x.dim() - 1)), input_bits).contiguous()
+            threshold = self._v_threshold.to(device).expand(*([1] * (x.dim() - 1)), input_bits).contiguous()
+
+        # 膜电位：batch 维度动态，bits 维度根据 input_bits 确定
+        # 使用 max(input_bits, max_bits) 确保足够容量
+        v_bits = max(input_bits, max_bits)
         if self.v is None:
             # 首次创建
-            self.v = torch.zeros(*batch_shape, max_bits, device=device, dtype=x.dtype)
+            self.v = torch.zeros(*batch_shape, v_bits, device=device, dtype=x.dtype)
         elif self.v.device != device:
             # 设备不匹配：移动到正确设备
             self.v = self.v.to(device)
-        if self.v.shape[:-1] != batch_shape:
-            # batch 维度变化：复制扩张（保留已有状态）
-            new_v = torch.zeros(*batch_shape, max_bits, device=device, dtype=x.dtype)
-            # 计算可复制的最小 batch 范围
+
+        # 检查是否需要重新分配 (batch 维度变化或位宽不足)
+        need_realloc = (self.v.shape[:-1] != batch_shape) or (self.v.shape[-1] < input_bits)
+        if need_realloc:
+            # batch 维度或位宽变化：复制扩张（保留已有状态）
+            new_v = torch.zeros(*batch_shape, v_bits, device=device, dtype=x.dtype)
+            # 计算可复制的最小范围
             old_shape = self.v.shape[:-1]
-            min_dims = min(len(old_shape), len(batch_shape))
-            slices = tuple(slice(0, min(old_shape[i], batch_shape[i])) for i in range(min_dims))
-            new_v[slices] = self.v[slices]
+            old_bits = self.v.shape[-1]
+            if len(old_shape) > 0 and len(batch_shape) > 0:
+                min_dims = min(len(old_shape), len(batch_shape))
+                slices = tuple(slice(0, min(old_shape[i], batch_shape[i])) for i in range(min_dims))
+                copy_bits = min(old_bits, v_bits)
+                new_v[slices + (slice(0, copy_bits),)] = self.v[slices + (slice(0, copy_bits),)]
             self.v = new_v
 
         # 切片到当前 bits

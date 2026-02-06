@@ -1,0 +1,204 @@
+\appendix
+\section{Entropy Preservation of BSE}
+\label{app:bse_entropy_proof}
+
+\paragraph{Setting.}
+Fix a bit-window length $N\in\mathbb{N}$. For each channel, let the per-layer affine calibration be $(\lambda,\mu)$ with $\lambda>0$ and $\mu\in\mathbb{R}$. Define the $N$-bit quantizer
+\begin{equation}
+\label{eq:quantizer_grid_def}
+\mathcal{Q}_N \;\triangleq\; \{0,1,\dots,2^{N}-1\}, 
+\qquad 
+q \;=\; \mathrm{clip}_{[0,\,2^N-1]}\!\Big(\mathrm{round}\big(\lambda\,(x+\mu)\big)\Big).
+\end{equation}
+The corresponding de-quantization (reconstruction) map is $\hat{x}=\lambda^{-1}q-\mu$.
+Write the binary expansion of $q$ as
+\begin{equation}
+\label{eq:binary_expansion_def}
+q \;=\; \sum_{t=0}^{N-1} b_t\,2^{N-1-t},
+\qquad b_t\in\{0,1\}.
+\end{equation}
+
+\paragraph{BSE encoder/decoder.}
+Let the bit-weights and thresholds be the standard positional schedule
+\begin{equation}
+\label{eq:standard_bit_schedule}
+W_{\mathrm{bit}}(t) \;=\; 2^{\,N-1-t},
+\qquad 
+\Theta(t) \;=\; W_{\mathrm{bit}}(t),
+\qquad t=0,\dots,N-1.
+\end{equation}
+Drive the non-leaky IF unit \eqref{eq:if_forward_clean} with a single impulse carrying the integer code:
+\begin{equation}
+\label{eq:scalar_drive}
+I_{\mathrm{in}}(t) \;=\; \delta_{t0}\,q,
+\qquad 
+V_m(0)=0.
+\end{equation}
+The \emph{BSE encoder} $\mathsf{E}_N:\mathcal{Q}_N\to\{0,1\}^{N}$ is defined as the spike train $S(t)\equiv S_{\mathrm{actual}}(t)$ produced by \eqref{eq:if_forward_clean}, $t=0,\dots,N-1$. The \emph{BSE decoder} $\mathsf{D}_N:\{0,1\}^{N}\to\mathcal{Q}_N$ is the weighted sum
+\begin{equation}
+\label{eq:bse_decoder}
+\mathsf{D}_N\big(\{s(t)\}_{t=0}^{N-1}\big) \;=\; \sum_{t=0}^{N-1} s(t)\,2^{\,N-1-t}.
+\end{equation}
+
+\begin{lemma}[Bit-exact emission]
+\label{lem:bit_exact}
+Under \eqref{eq:standard_bit_schedule}–\eqref{eq:scalar_drive}, the encoder emits the binary digits of $q$ in MSB$\to$LSB order:
+\[
+S(t)\;=\;b_t\quad\text{for all }t=0,\dots,N-1,
+\]
+and the membrane obeys $V_m(t)=\sum_{\tau>t} b_\tau\,2^{\,N-1-\tau}$ for $t=0,\dots,N$ (with the empty sum $0$ at $t=N$).
+\end{lemma}
+
+\begin{proof}
+By \eqref{eq:if_forward_clean} and \eqref{eq:scalar_drive},
+\[
+V_m(0)=0,\quad V_m(0)+I_{\mathrm{in}}(0)=q.
+\]
+At $t=0$ the threshold is $\Theta(0)=2^{N-1}$. Hence $M_0=\mathbb{1}\{q\ge 2^{N-1}\}=b_0$ and the post-update membrane is
+\[
+V_m(1)=q-b_0\,2^{N-1}=\sum_{\tau=1}^{N-1} b_\tau\,2^{\,N-1-\tau}.
+\]
+Assume the claim holds up to time $t$. Then $V_m(t)=\sum_{\tau>t} b_\tau\,2^{N-1-\tau}$ and $\Theta(t)=2^{N-1-t}$. Thus
+\[
+M_t=\mathbb{1}\{V_m(t)\ge \Theta(t)\}=\mathbb{1}\Big\{\sum_{\tau>t} b_\tau\,2^{N-1-\tau}\ \ge\ 2^{N-1-t}\Big\}=b_t,
+\]
+since the sum’s leading term is $b_t\,2^{N-1-t}$ and all lower-order terms are strictly smaller than $2^{N-1-t}$. The update gives
+\[
+V_m(t+1)=V_m(t)-M_t\,\Theta(t)=\sum_{\tau>t} b_\tau\,2^{N-1-\tau}-b_t\,2^{N-1-t}=\sum_{\tau>t+1} b_\tau\,2^{N-1-\tau}.
+\]
+By induction the statements hold for all $t$, and $V_m(N)=0$.
+\end{proof}
+
+\begin{theorem}[Encoder–decoder bijection]
+\label{thm:bijective}
+$\mathsf{E}_N$ and $\mathsf{D}_N$ are mutual inverses:
+\[
+\mathsf{D}_N\big(\mathsf{E}_N(q)\big)=q\quad\text{for all }q\in\mathcal{Q}_N,
+\qquad
+\mathsf{E}_N\big(\mathsf{D}_N(S)\big)=S\quad\text{for all }S\in\{0,1\}^{N}.
+\]
+\end{theorem}
+
+\begin{proof}
+The first identity follows from Lemma~\ref{lem:bit_exact} and \eqref{eq:bse_decoder}:
+\[
+\mathsf{D}_N\big(\mathsf{E}_N(q)\big)=\sum_{t=0}^{N-1} S(t)\,2^{N-1-t}=\sum_{t=0}^{N-1} b_t\,2^{N-1-t}=q.
+\]
+For the second identity, any $S\in\{0,1\}^N$ defines $q^\star=\mathsf{D}_N(S)$ with binary digits $b_t^\star=S(t)$. Lemma~\ref{lem:bit_exact} shows that driving the IF with $q^\star$ emits $b_t^\star$ at time $t$, i.e., $\mathsf{E}_N(q^\star)=S$.
+\end{proof}
+
+\begin{theorem}[Entropy preservation at $N$-bit alignment]
+\label{thm:entropy_preservation}
+Let $X$ be any real-valued random variable and let $Q=\mathrm{clip}\!\circ\!\mathrm{round}(\lambda(X+\mu))\in\mathcal{Q}_N$ be its $N$-bit quantization \eqref{eq:quantizer_grid_def}. Let $S=\mathsf{E}_N(Q)$ be the BSE spike code under \eqref{eq:standard_bit_schedule}–\eqref{eq:scalar_drive}. Then the (discrete) Shannon entropy is invariant:
+\[
+H(Q)=H(S).
+\]
+Equivalently, the pushforward distribution on spike sequences is a relabeling of the code distribution.
+\end{theorem}
+
+\begin{proof}
+By Theorem~\ref{thm:bijective}, $\mathsf{E}_N$ is a bijection between the finite sets $\mathcal{Q}_N$ and $\{0,1\}^{N}$. Hence, for all $s\in\{0,1\}^{N}$,
+\[
+\mathbb{P}[S=s]=\mathbb{P}\big[Q=\mathsf{D}_N(s)\big].
+\]
+Therefore
+\[
+H(S)=-\sum_{s}\mathbb{P}[S=s]\log \mathbb{P}[S=s]
+=-\sum_{q}\mathbb{P}[Q=q]\log \mathbb{P}[Q=q]=H(Q).
+\]
+\end{proof}
+
+\paragraph{Vector/batch case.}
+For $B$ samples and $d$ channels, define $Q\in\mathcal{Q}_N^{B\times d}$ and $S\in\{0,1\}^{N\times B\times d}$ by applying $(\lambda,\mu)$ per channel and $\mathsf{E}_N$ elementwise. The map $\mathsf{E}_N^{\otimes Bd}$ is a bijection between the two finite sets, so the joint entropy is preserved:
+\[
+H\big(Q_{1:B,1:d}\big)=H\big(S_{0:N-1,\,1:B,\,1:d}\big).
+\]
+
+\paragraph{Exactness of spike-domain accumulation.}
+Within a bit window, the Soma pre-accumulation equals decoding in \eqref{eq:bse_decoder}:
+\[
+Q_a \;=\; \sum_{t=0}^{N-1} S_a(t)\,W_{\mathrm{bit}}(t),
+\]
+so for any weight matrix $W$ the linear map $A=Q_a W^\top$ is identical to applying $W$ to the decoded integers. Thus all spike-domain accumulations are \emph{exact integer arithmetic}. The only approximation in the BSE pathway appears at the explicit rounding/clipping that defines $Q$ (or $Q_y$ in \eqref{eq:soma_def}).
+
+\begin{corollary}[No error diffusion from BSE under $N$-bit alignment]
+\label{cor:no_diffusion}
+Assume each layer uses $(\lambda,\mu)$ that matches its $N$-bit quantization grid and uses the binary schedule \eqref{eq:standard_bit_schedule}. Then, relative to the corresponding $N$-bit quantized ANN, the BSE forward is functionally identical: encoding, spike-domain accumulation, and decoding are exact and introduce \emph{no additional error}. Consequently, any discrepancy from full precision equals the ANN’s own $N$-bit quantization error and does not diffuse or amplify due to BSE.
+\end{corollary}
+
+\paragraph{Remarks.}
+(i) The proof only requires a positional system with unique representation; the binary schedule \eqref{eq:standard_bit_schedule} is the canonical choice.  
+(ii) Signed ranges are handled by the offset $\mu$ (cf.\ \eqref{eq:soma_def}), which translates the dynamic range to $[0,2^N-1]$ before encoding and back after decoding; bijectivity and entropy preservation hold channelwise under this affine change of variables.  
+(iii) The results extend verbatim to per-channel $(\lambda_o,\mu_o)$ and per-layer bit windows, provided $N$ is the operative grid width used by the ANN baseline.
+
+\section{ASNC Formal Specification}
+\label{app:asnc_details}
+
+\subsection{Segmental Codec and BSE Re-encoding}
+\paragraph{Core Objective.}
+Each segmental codec $\mathcal{C}_i(x)$ utilizes a spiking neural structure:
+\begin{align}
+\text{spikes}_i(t) &= \mathrm{LIF}\!\big(\mathrm{quantize}(x\, s_i + b_i),\, \theta_i(t)\big), \\
+\mathcal{C}_i(x) &= \sum_{t=1}^{T} w_i(t)\, \text{spikes}_i(t),
+\end{align}
+where $w_i(t)$ are trainable decoding weights for segment $i$.
+
+\paragraph{BSE-Compatible Output.}
+The decoded analog value $\widehat{y}_i$ for each active segment is immediately re-encoded by the BSE encoder to produce $S^{\mathrm{BSE}}_i(t)$ within the same window $T$; the overall output is
+\begin{equation}
+S^{\mathrm{BSE}}(t) \;=\; \sum_{i=1}^{N} \mathcal{I}_i(x)\, S^{\mathrm{BSE}}_i(t).
+\end{equation}
+
+\subsection{Adaptive Splitting Algorithm}
+\paragraph{Split Criterion.}
+\begin{equation}
+\frac{L_i}{\bar{L}} \cdot \big(1 + \sigma_i^2\big) \cdot \rho_i \;>\; \tau_{\mathrm{adaptive}}.
+\end{equation}
+
+\paragraph{Adaptive Threshold.}
+\begin{equation}
+\tau_{\mathrm{adaptive}} \;=\; \tau_{\mathrm{base}} \cdot \alpha_{\mathrm{stag}} \cdot \alpha_{\mathrm{prog}},
+\end{equation}
+where $\tau_{\mathrm{base}}$ is a base threshold, and $\alpha$ factors correct for stagnation and training progress.
+
+\paragraph{Stagnation Factor $\alpha_{\mathrm{stag}}$.}
+\begin{equation}
+\alpha_{\mathrm{stag}} \;=\;
+\begin{cases}
+0.2, & \text{if } N_{\mathrm{stag}}/N_{\mathrm{active}} > 0.6,\\
+0.4, & \text{if } N_{\mathrm{stag}}/N_{\mathrm{active}} > 0.3,\\
+1.0, & \text{otherwise.}
+\end{cases}
+\end{equation}
+
+\paragraph{Progress Factor $\alpha_{\mathrm{prog}}$.}
+\begin{equation}
+\alpha_{\mathrm{prog}} \;=\;
+\begin{cases}
+0.4, & \text{if } (L_0 - L_t)/L_0 < 0.005,\\
+0.6, & \text{if } (L_0 - L_t)/L_0 < 0.02,\\
+1.0, & \text{otherwise.}
+\end{cases}
+\end{equation}
+
+\paragraph{Split Point Selection.}
+\begin{align}
+S(x_s) \;=\; \alpha_1\, E_{\mathrm{sep}}(x_s) \;+\; \alpha_2\, C_{\mathrm{cons}}(x_s)
+\;+\; \alpha_3\, B_{\mathrm{bal}}(x_s) \;+\; \alpha_4\, Y_{\mathrm{sep}}(x_s).
+\end{align}
+
+\subsection{Adaptive Weighting Mechanism}
+\paragraph{Morphology-Aware Weights.}
+\begin{equation}
+w_i \;=\; 0.5\, I_{\mathrm{func}}(i) \;+\; 0.35\, I_{\mathrm{error}}(i) \;+\; 0.15\, D_i.
+\end{equation}
+\paragraph{Regional Priority $R_{\mathrm{region}}(i)$.}
+\begin{equation}
+R_{\mathrm{region}}(i) \;=\;
+\begin{cases}
+3.0, & a_i < 0 \text{ and } b_i > 0 \quad \text{(Zero-Crossing Region)},\\
+2.5, & b_i \le 0 \quad \text{(Purely Negative Region)},\\
+2.0, & a_i \ge 0 \quad \text{(Purely Positive Region)},\\
+1.0, & \text{otherwise.}
+\end{cases}
+\end{equation}

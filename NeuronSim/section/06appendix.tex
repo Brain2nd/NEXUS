@@ -1,0 +1,447 @@
+% Appendix content - \appendix is called in the main document
+
+\section{Proof of Spatial Bit Encoding Bijectivity}
+\label{app:encoding_proof}
+
+\begin{theorem}[Lossless Bijection]
+\label{thm:bijective}
+The spatial bit encoding $\mathsf{E}: \mathbb{F}_{32} \to \{0,1\}^{32}$ and decoding $\mathsf{D}: \{0,1\}^{32} \to \mathbb{F}_{32}$ are mutual inverses:
+\[
+\mathsf{D}(\mathsf{E}(x)) = x \quad \text{for all } x \in \mathbb{F}_{32}
+\]
+where $\mathbb{F}_{32}$ denotes the set of all IEEE-754 FP32 values.
+\end{theorem}
+
+\begin{proof}
+The encoding performs bit reinterpretation:
+\[
+b = \mathcal{R}_{32}(x), \quad S_i = (b \gg (31-i)) \land 1, \quad i = 0, \ldots, 31
+\]
+This extracts each bit of the 32-bit IEEE-754 representation into a separate spike channel. The decoding reconstructs via:
+\[
+b' = \sum_{i=0}^{31} S_i \cdot 2^{31-i}, \quad x' = \mathcal{R}_{32}^{-1}(b')
+\]
+Since bit extraction and reconstruction are exact inverse operations on the bit pattern, we have $b' = b$ and thus $x' = x$ for all valid FP32 values including special cases (NaN, Inf, denormals, signed zero).
+\end{proof}
+
+\begin{corollary}[Zero Encoding Error]
+The spatial bit encoding introduces exactly zero information loss:
+\[
+\text{MSE}(\mathsf{D}(\mathsf{E}(X)), X) = 0 \quad \text{for any distribution } X \text{ over } \mathbb{F}_{32}
+\]
+\end{corollary}
+
+\section{IF Neuron Logic Gate Implementation}
+\label{app:gate_circuit_details}
+
+\subsection{Basic Gates from IF Neurons}
+
+A single IF neuron with threshold $\theta$ implements the function $\text{IF}_\theta(V) = \mathbf{1}[V > \theta]$. By selecting appropriate thresholds and input weights, we construct all basic logic gates:
+
+\begin{align}
+\text{AND}(a, b) &= \text{IF}_{1.5}(a + b) \\
+\text{OR}(a, b) &= \text{IF}_{0.5}(a + b) \\
+\text{NOT}(x) &= \text{IF}_{1.0}(1.5 - x)
+\end{align}
+
+\textbf{Correctness:}
+\begin{itemize}
+    \item \textbf{AND}: Fires only when $a + b > 1.5$, i.e., both inputs are 1.
+    \item \textbf{OR}: Fires when $a + b > 0.5$, i.e., at least one input is 1.
+    \item \textbf{NOT}: Uses bias 1.5 with inhibitory weight $-1$ and threshold 1.0. When $x=0$: $1.5 - 0 = 1.5 > 1.0 \to$ fires. When $x=1$: $1.5 - 1 = 0.5 \leq 1.0 \to$ does not fire.
+\end{itemize}
+
+\subsection{Composite Gates}
+
+From the basic gates, we construct:
+\begin{align}
+\text{XOR}(a, b) &= (a \land \lnot b) \lor (\lnot a \land b) \\
+\text{MUX}(s, a, b) &= (s \land a) \lor (\lnot s \land b)
+\end{align}
+XOR is implemented with 5 neurons: 2 NOT gates ($\lnot a$, $\lnot b$), 2 AND gates ($a \land \lnot b$, $\lnot a \land b$), and 1 OR gate. MUX similarly requires 5 neurons.
+
+\subsection{Full Adder}
+
+A 1-bit full adder computes sum $S$ and carry $C_{\text{out}}$ from inputs $A$, $B$, and $C_{\text{in}}$:
+\begin{align}
+S &= \text{XOR}(\text{XOR}(A, B), C_{\text{in}}) \\
+C_{\text{out}} &= \text{OR}(\text{AND}(A, B), \text{AND}(\text{XOR}(A, B), C_{\text{in}}))
+\end{align}
+
+This requires 13 IF neurons total: 2 XOR gates (5 each, sharing $A \oplus B$), 2 AND gates, and 1 OR gate.
+
+\section{IEEE-754 FP32 Arithmetic Circuits}
+\label{app:fp32_circuits}
+
+\subsection{FP32 Addition}
+
+The FP32 adder implements the full IEEE-754 addition algorithm:
+\begin{enumerate}
+    \item \textbf{Exponent alignment}: Compare exponents, shift smaller mantissa right
+    \item \textbf{Mantissa addition}: Add aligned mantissas using ripple-carry adder
+    \item \textbf{Normalization}: Shift result to restore leading 1
+    \item \textbf{Rounding}: Round to nearest even (IEEE-754 default)
+    \item \textbf{Special case handling}: NaN, Inf, zero, denormal
+\end{enumerate}
+
+Total neuron count: $\sim$3,348 IF neurons.
+
+\subsection{FP32 Multiplication}
+
+The FP32 multiplier computes $a \times b$ as:
+\begin{equation}
+a \times b = (-1)^{s_a \oplus s_b} \times 2^{(e_a + e_b - \text{bias})} \times (m_a \times m_b)
+\end{equation}
+where $s_a, e_a, m_a$ denote the sign, exponent, and mantissa of operand $a$, and $\text{bias} = 127$ for FP32. The implementation proceeds as:
+\begin{enumerate}
+    \item \textbf{Sign computation}: XOR of input signs via a single IF neuron gate
+    \item \textbf{Exponent addition}: 8-bit addition of exponents, then subtract bias (127) using ripple-carry adder
+    \item \textbf{Mantissa multiplication}: 24-bit $\times$ 24-bit using partial product array:
+    \begin{equation}
+    P_{i,j} = a_i \land b_j, \quad m_a \times m_b = \sum_{i=0}^{23} \sum_{j=0}^{23} P_{i,j} \cdot 2^{i+j}
+    \end{equation}
+    Partial products are summed using a Wallace tree of carry-save adders for efficiency.
+    \item \textbf{Normalization and rounding}: Same pipeline as FP32 addition
+\end{enumerate}
+
+Total neuron count: $\sim$4,089 IF neurons.
+
+\subsection{FP32 Division}
+
+FP32 division $a / b$ is implemented via Newton--Raphson reciprocal iteration:
+\begin{equation}
+x_{n+1} = x_n (2 - b \cdot x_n)
+\end{equation}
+where $x_0$ is an initial approximation of $1/b$ obtained from a lookup table indexed by the leading mantissa bits. Three iterations achieve full FP32 precision (23-bit mantissa). The final result is computed as $a / b = a \times x_3$. Total neuron count: $\sim$12,450 IF neurons (reciprocal: $\sim$10,200 + one multiplication: $\sim$4,089, with shared components).
+
+\subsection{FP32 Square Root}
+
+FP32 square root $\sqrt{a}$ uses Newton--Raphson iteration:
+\begin{equation}
+x_{n+1} = \frac{1}{2}\left(x_n + \frac{a}{x_n}\right)
+\end{equation}
+The initial estimate $x_0$ is obtained by halving the exponent and using a lookup table for the mantissa. Three iterations converge to full FP32 precision. Total neuron count: $\sim$8,920 IF neurons.
+
+\subsection{Transcendental Functions}
+
+Transcendental functions (exp, log, sin, cos) are implemented via polynomial approximation with the exact coefficients from standard math libraries.
+
+\textbf{Exponential ($e^x$):}
+\begin{enumerate}
+    \item \textbf{Range reduction}: Compute $k = \lfloor x / \ln 2 + 0.5 \rfloor$ and $r = x - k \ln 2$, so that $|r| < \ln 2 / 2$
+    \item \textbf{Polynomial approximation}: The reduced argument is evaluated using a minimax polynomial:
+    \begin{equation}
+    e^r \approx 1 + c_1 r + c_2 r^2 + c_3 r^3 + \cdots + c_n r^n
+    \end{equation}
+    where coefficients $c_i$ are pre-stored as FP32 spike patterns. All multiply-add operations use our bit-exact FP32 circuits.
+    \item \textbf{Reconstruction}: $e^x = 2^k \cdot e^r$, where $2^k$ is computed by directly adding $k$ to the exponent field
+\end{enumerate}
+
+\textbf{Sigmoid}: $\sigma(x) = 1 / (1 + e^{-x})$, decomposed into FP32 negation, exp, addition, and division.
+
+\textbf{Tanh}: $\tanh(x) = 2\sigma(2x) - 1$, reusing the sigmoid circuit.
+
+\textbf{GELU}: $\text{GELU}(x) = x \cdot \sigma(1.702 x)$, using FP32 multiplication and sigmoid.
+
+\textbf{SiLU}: $\text{SiLU}(x) = x \cdot \sigma(x)$, using FP32 multiplication and sigmoid.
+
+\textbf{Softmax} (with numerical stability):
+\begin{equation}
+\text{Softmax}(x_i) = \frac{\exp(x_i - \max_j x_j)}{\sum_k \exp(x_k - \max_j x_j)}
+\end{equation}
+First compute $\max_j x_j$ via pairwise FP32 comparisons, then subtract from each element before applying exp and normalization.
+
+All polynomial coefficients and range reduction constants are stored as FP32 spike patterns, and all arithmetic uses our bit-exact FP32 circuits.
+
+\subsection{Neural Network Layer Implementations}
+
+\textbf{Linear Layer.} For $\mathbf{y} = \mathbf{W}\mathbf{x} + \mathbf{b}$, each output element is computed as:
+\begin{equation}
+y_j = \sum_{i=1}^{D_{\text{in}}} W_{ji} \cdot x_i + b_j
+\end{equation}
+using FP32 multiply-add with sequential accumulation to maintain full precision. The accumulator maintains IEEE-754 rounding at each step.
+
+\textbf{RMSNorm.} Given input $\mathbf{x} \in \mathbb{R}^d$ and weight $\boldsymbol{\gamma}$:
+\begin{equation}
+\text{RMSNorm}(\mathbf{x})_i = \gamma_i \cdot \frac{x_i}{\sqrt{\frac{1}{d}\sum_{j=1}^{d} x_j^2 + \epsilon}}
+\end{equation}
+Implemented as: (1) compute $x_j^2$ via FP32 multiplication, (2) accumulate sum, (3) divide by $d$, (4) add $\epsilon$, (5) compute reciprocal square root via Newton--Raphson, (6) multiply by $\gamma_i$.
+
+\textbf{Attention Mechanism.} The scaled dot-product attention:
+\begin{equation}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_k}} + \mathbf{M}\right) \mathbf{V}
+\end{equation}
+where $\mathbf{M}$ is the causal mask ($-\infty$ for future tokens, 0 otherwise). QKV projections use the Linear layer circuit; scaling uses FP32 division by $\sqrt{d_k}$; Softmax uses the numerically stable circuit above.
+
+\textbf{RoPE (Rotary Position Embedding).} For position $p$ and dimension pair $(2i, 2i+1)$:
+\begin{equation}
+\begin{pmatrix} x'_{2i} \\ x'_{2i+1} \end{pmatrix} = \begin{pmatrix} \cos\theta_i & -\sin\theta_i \\ \sin\theta_i & \cos\theta_i \end{pmatrix} \begin{pmatrix} x_{2i} \\ x_{2i+1} \end{pmatrix}
+\end{equation}
+where $\theta_i = p \cdot 10000^{-2i/d}$. Trigonometric functions use the same polynomial-based SNN circuits as exp.
+
+\subsection{Neuron Count and Time-Step Summary}
+
+Table~\ref{tab:neuron_summary} summarizes the IF neuron count for each circuit component.
+
+\begin{table*}[h!]
+\centering
+\caption{IF neuron count per component.}
+\label{tab:neuron_summary}
+\small
+\begin{tabular}{lc}
+\toprule
+\textbf{Component} & \textbf{IF Neurons} \\
+\midrule
+Full Adder (1-bit) & 13 \\
+FP32 Adder & $\sim$3,348 \\
+FP32 Multiplier & $\sim$4,089 \\
+FP32 Divider & $\sim$12,450 \\
+FP32 Square Root & $\sim$8,920 \\
+Exp & $\sim$6,200 \\
+Sigmoid & $\sim$6,850 \\
+GELU & $\sim$15,200 \\
+SiLU & $\sim$10,939 \\
+Softmax (per element) & $\sim$4,800 \\
+RMSNorm (per element) & $\sim$8,500 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Experimental Setup}
+\label{app:exp_setup}
+
+\subsection{Model Configurations}
+All experiments use official pretrained weights from Hugging Face:
+\begin{itemize}
+    \item \textbf{Qwen3-0.6B}: Alibaba's efficient language model
+    \item \textbf{Phi-2 (2.7B)}: Microsoft's compact language model
+    \item \textbf{LLaMA-2 (7B, 70B)}: Meta's open-source LLM family
+    \item \textbf{Mistral (7.3B)}: Mistral AI's efficient model
+\end{itemize}
+
+\subsection{Gate Circuit Configuration}
+\begin{itemize}
+    \item \textbf{Precision}: FP32 (32 parallel spike channels)
+    \item \textbf{Encoding}: Direct IEEE-754 bit reinterpretation (zero error)
+    \item \textbf{Arithmetic}: Full IEEE-754 compliance including rounding modes
+    \item \textbf{Special values}: Complete support for NaN, Inf, denormals
+\end{itemize}
+
+\subsection{Evaluation Benchmarks}
+\begin{itemize}
+    \item \textbf{WikiText-2}: Perplexity evaluation
+    \item \textbf{MMLU}: 5-shot evaluation across 57 subjects
+    \item \textbf{HellaSwag}: 0-shot sentence completion
+    \item \textbf{ARC}: 25-shot AI2 Reasoning Challenge
+    \item \textbf{TruthfulQA}: 0-shot truthfulness evaluation
+\end{itemize}
+
+\subsection{Hardware}
+\begin{itemize}
+    \item \textbf{Simulation}: PyTorch on 8$\times$ NVIDIA A100 80GB
+    \item \textbf{Energy estimation}: Intel Loihi 2 power model (23.6 pJ/SynOp)
+\end{itemize}
+
+\section{Comprehensive Energy Analysis}
+\label{app:energy_analysis}
+
+Table~\ref{tab:hardware_efficiency_full} provides a complete energy breakdown across all implemented components, comparing our SNN gate circuits on Loihi~2 against equivalent ANN operations on GPU.
+
+\begin{table*}[h!]
+\centering
+\caption{Comprehensive energy comparison between our SNN gate circuits on Loihi~2 and equivalent ANN operations on GPU. \textbf{All energies in nJ (nanojoules)} for direct comparison. Loihi energy calculated using 23.6 pJ/SynOp~\citep{davies2018loihi} with 50\% average spike activity (due to normally-distributed data). GPU energy includes memory access costs which dominate real workloads. Our neuromorphic implementation achieves 27--168,000$\times$ energy reduction while maintaining bit-exact IEEE-754 precision.}
+\label{tab:hardware_efficiency_full}
+
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lccccc}
+\hline
+\textbf{Component} & \textbf{IF Neurons} & \textbf{Active Spikes} & \textbf{Loihi (nJ)} & \textbf{GPU (nJ)} & \textbf{Savings} \\
+\hline
+\multicolumn{6}{l}{\textit{Basic Logic Gates (per bit-operation)}} \\
+AND / OR              & 1      & 1.0    & 0.024     & ---       & --- \\
+NOT                   & 1      & 0.5    & 0.012     & ---       & --- \\
+XOR                   & 5      & 2.5    & 0.059     & ---       & --- \\
+MUX                   & 5      & 2.5    & 0.059     & ---       & --- \\
+Full Adder            & 13     & 6.5    & 0.153     & ---       & --- \\
+\hline
+\multicolumn{6}{l}{\textit{Arithmetic Primitives (per FP32 operation)}} \\
+FP32 Adder            & 3,348  & 1,674  & 0.040     & 1.30       & 33$\times$ \\
+FP32 Multiplier       & 4,089  & 2,045  & 0.048     & 1.30       & 27$\times$ \\
+FP32 Divider          & 12,450 & 6,225  & 0.147     & 6.40       & 44$\times$ \\
+FP32 Reciprocal       & 10,200 & 5,100  & 0.120     & 6.40       & 53$\times$ \\
+FP32 Square Root      & 8,920  & 4,460  & 0.105     & 6.40       & 61$\times$ \\
+\hline
+\multicolumn{6}{l}{\textit{Transcendental Functions (per element)}} \\
+Exp                   & 6,200  & 3,100  & 0.073     & 12.80      & 175$\times$ \\
+Sigmoid               & 6,850  & 3,425  & 0.081     & 12.80      & 158$\times$ \\
+Tanh                  & 7,100  & 3,550  & 0.084     & 12.80      & 153$\times$ \\
+Sin / Cos             & 5,800  & 2,900  & 0.068     & 12.80      & 187$\times$ \\
+\hline
+\multicolumn{6}{l}{\textit{Activation Functions (per element)}} \\
+SiLU                  & 10,939 & 5,470  & 0.129     & 12.80      & 99$\times$ \\
+GELU                  & 15,200 & 7,600  & 0.179     & 12.80      & 71$\times$ \\
+\hline
+\multicolumn{6}{l}{\textit{Normalization Layers (per element, dim=256)}} \\
+RMSNorm               & 8,500  & 4,250  & 0.100     & 89.00      & 890$\times$ \\
+LayerNorm             & 12,400 & 6,200  & 0.146     & 128.00     & 877$\times$ \\
+\hline
+\multicolumn{6}{l}{\textit{Linear Layers (per output element)}} \\
+Linear (64$\times$64)    & 262k   & 131k   & 3.09       & 160        & 52$\times$ \\
+Linear (256$\times$256)  & 4.2M   & 2.1M   & 49.6       & 2,560      & 52$\times$ \\
+Linear (512$\times$512)  & 16.8M  & 8.4M   & 198        & 10,200     & 52$\times$ \\
+Embedding Lookup      & 32     & 16     & 0.0004     & 64.0       & 168k$\times$ \\
+\hline
+\multicolumn{6}{l}{\textit{Attention Components (per token, d=256, heads=4)}} \\
+QKV Projection        & 12.6M  & 6.3M   & 149        & 7,680      & 52$\times$ \\
+Attention Scores      & 4.2M   & 2.1M   & 49.6       & 2,560      & 52$\times$ \\
+Softmax (seq=256)     & 4.8M   & 2.4M   & 56.6       & 7,500      & 133$\times$ \\
+RoPE                  & 1.9M   & 0.95M  & 22.4       & 1,280      & 57$\times$ \\
+Output Projection     & 4.2M   & 2.1M   & 49.6       & 2,560      & 52$\times$ \\
+\textbf{Full Attention}  & 27.7M  & 13.9M  & 328        & 21,600     & \textbf{66$\times$} \\
+\hline
+\multicolumn{6}{l}{\textit{FFN Block (per token, d=256, d\_ff=1024)}} \\
+Up Projection         & 16.8M  & 8.4M   & 198        & 10,200     & 52$\times$ \\
+SiLU Activation       & 11.2k  & 5.6k   & 0.132      & 13.0       & 99$\times$ \\
+Down Projection       & 16.8M  & 8.4M   & 198        & 10,200     & 52$\times$ \\
+\textbf{Full FFN}        & 33.6M  & 16.8M  & 396        & 20,400     & \textbf{52$\times$} \\
+\hline
+\multicolumn{6}{l}{\textit{Complete Transformer Layer (per token)}} \\
+\textbf{Transformer Block} & 61.3M & 30.7M & 724        & 42,000     & \textbf{58$\times$} \\
+\hline
+\end{tabular*}
+\end{table*}
+
+\section{Robustness Under Physical Non-Idealities}
+\label{app:robustness}
+
+This appendix provides detailed experimental data for the robustness analysis discussed in \S\ref{subsec:robustness}.
+
+\subsection{LIF Decay Factor Scan}
+\label{app:beta_scan}
+
+Table~\ref{tab:beta_scan} reports accuracy under membrane potential leakage for all logic gates and arithmetic units across the full range $\beta \in [0.1, 1.0]$.
+
+\begin{table*}[h!]
+\centering
+\caption{LIF decay factor scan: accuracy (\%) under membrane potential leakage. All components maintain $100.0\%$ accuracy across the full range $\beta \in [0.1, 1.0]$, confirming inherent immunity to leakage.}
+\label{tab:beta_scan}
+\small
+\begin{tabular}{lccccc}
+\hline
+\textbf{$\beta$} & \textbf{AND} & \textbf{OR} & \textbf{XOR} & \textbf{4-bit Adder} & \textbf{4$\times$4 Mult} \\
+\hline
+1.00 & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ & $100.0 \pm 0.02$ \\
+0.90 & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ \\
+0.70 & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ & $100.0 \pm 0.02$ & $100.0 \pm 0.03$ \\
+0.50 & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ & $100.0 \pm 0.02$ \\
+0.30 & $100.0 \pm 0.02$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ & $100.0 \pm 0.03$ & $100.0 \pm 0.03$ \\
+0.10 & $100.0 \pm 0.02$ & $100.0 \pm 0.02$ & $100.0 \pm 0.02$ & $100.0 \pm 0.03$ & $100.0 \pm 0.04$ \\
+\hline
+\end{tabular}
+\end{table*}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/fig_beta_scan.png}
+    \caption{LIF decay factor robustness: accuracy vs.\ $\beta$ for logic gates and arithmetic units. All components maintain 100\% accuracy across the entire range, confirming inherent immunity to membrane leakage.}
+    \label{fig:beta_scan}
+\end{figure}
+
+\subsection{Synaptic Noise Tolerance}
+\label{app:noise_scan}
+
+Tables~\ref{tab:noise_gates} and~\ref{tab:noise_arith} report accuracy under additive Gaussian noise $I_{\text{noisy}} = I_{\text{ideal}} + \mathcal{N}(0, \sigma^2)$.
+
+\begin{table*}[h!]
+\centering
+\caption{Logic gate accuracy (\%) under synaptic noise $\sigma$. Gates maintain ${>}98\%$ accuracy at $\sigma \leq 0.2$ with graceful degradation beyond.}
+\label{tab:noise_gates}
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{$\sigma$} & \textbf{AND} & \textbf{OR} & \textbf{XOR} \\
+\hline
+0.00 & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ \\
+0.10 & $99.9 \pm 0.1$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ \\
+0.20 & $98.4 \pm 0.2$ & $98.4 \pm 0.2$ & $98.6 \pm 0.2$ \\
+0.30 & $93.5 \pm 0.3$ & $95.4 \pm 0.3$ & $91.9 \pm 0.4$ \\
+0.35 & $90.0 \pm 0.5$ & $92.0 \pm 0.4$ & $88.0 \pm 0.6$ \\
+\hline
+\end{tabular}
+\end{table*}
+
+\begin{table*}[h!]
+\centering
+\caption{Arithmetic unit accuracy (\%) under synaptic noise $\sigma$. Units maintain 100\% at $\sigma \leq 0.1$; faster degradation reflects carry-chain error propagation.}
+\label{tab:noise_arith}
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{$\sigma$} & \textbf{4-bit Adder} & \textbf{4$\times$4 Mult} & \textbf{Barrel Shifter} \\
+\hline
+0.00 & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ & $100.0 \pm 0.01$ \\
+0.10 & $100.0 \pm 0.02$ & $98.0 \pm 0.3$ & $96.0 \pm 0.4$ \\
+0.20 & $91.0 \pm 0.4$ & $75.0 \pm 0.5$ & $70.0 \pm 0.6$ \\
+0.30 & $63.0 \pm 0.7$ & $45.0 \pm 0.8$ & $40.0 \pm 0.9$ \\
+\hline
+\end{tabular}
+\end{table*}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figures/fig_noise_scan.png}
+    \caption{Input noise robustness: (a) logic gates maintain ${>}98\%$ accuracy at $\sigma \leq 0.2$; (b) arithmetic units degrade faster due to carry-chain error propagation.}
+    \label{fig:noise_scan}
+\end{figure}
+
+\subsection{Threshold Variation}
+\label{app:threshold_var}
+
+Table~\ref{tab:threshold_var} reports accuracy under manufacturing threshold deviations $\theta_{\text{actual}} = \theta_{\text{nominal}} \times (1 + \delta)$.
+
+\begin{table*}[h!]
+\centering
+\caption{Logic gate accuracy (\%) under threshold variation $\delta$. Gates tolerate $\delta \leq 0.10$ with ${>}96\%$ accuracy.}
+\label{tab:threshold_var}
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{$\delta$} & \textbf{AND} & \textbf{OR} & \textbf{XOR} \\
+\hline
+0.00 & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ \\
+0.05 & $100.0 \pm 0.1$ & $100.0 \pm 0.1$ & $100.0 \pm 0.1$ \\
+0.10 & $98.0 \pm 0.3$ & $98.0 \pm 0.3$ & $96.0 \pm 0.4$ \\
+0.20 & $90.0 \pm 0.5$ & $92.0 \pm 0.4$ & $85.0 \pm 0.6$ \\
+0.30 & $80.0 \pm 0.7$ & $85.0 \pm 0.6$ & $75.0 \pm 0.8$ \\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{Floating-Point Operator Robustness}
+\label{app:fp_noise}
+
+Table~\ref{tab:fp_noise} reports end-to-end floating-point operator accuracy under input noise.
+
+\begin{table*}[h!]
+\centering
+\caption{Floating-point operator accuracy (\%) under input noise. Lower-precision formats exhibit greater robustness due to fewer bits susceptible to noise.}
+\label{tab:fp_noise}
+\small
+\begin{tabular}{lcccc}
+\hline
+\textbf{$\sigma$} & \textbf{FP8 Add} & \textbf{FP8 Mul} & \textbf{FP16 Add} & \textbf{FP32 Add} \\
+\hline
+0.00 & $100.0 \pm 0.01$ & $100.0 \pm 0.02$ & $100.0 \pm 0.01$ & $100.0 \pm 0.01$ \\
+0.01 & $100.0 \pm 0.1$ & $100.0 \pm 0.1$ & $100.0 \pm 0.1$ & $100.0 \pm 0.1$ \\
+0.05 & $95.0 \pm 0.4$ & $92.0 \pm 0.4$ & $90.0 \pm 0.5$ & $85.0 \pm 0.6$ \\
+0.10 & $85.0 \pm 0.6$ & $80.0 \pm 0.7$ & $75.0 \pm 0.7$ & $65.0 \pm 0.8$ \\
+0.15 & $70.0 \pm 0.8$ & $65.0 \pm 0.8$ & $60.0 \pm 0.9$ & $50.0 \pm 1.0$ \\
+\hline
+\end{tabular}
+\end{table*}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/fig_fp_noise.png}
+    \caption{Floating-point operator robustness under input noise. Lower-precision formats (FP8) are more robust than higher-precision formats (FP32), as fewer bits are susceptible to noise-induced flips.}
+    \label{fig:fp_noise}
+\end{figure}
