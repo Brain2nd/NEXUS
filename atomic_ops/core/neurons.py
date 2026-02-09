@@ -203,11 +203,11 @@ class SimpleIFNode(nn.Module):
 
 
 class SimpleLIFNode(nn.Module):
-    """简化的 LIF 神经元 (有泄漏) - 支持向量化阈值和泄漏率
+    """简化的 LIF 神经元 (有泄漏) - 支持向量化阈值和保留率
 
     动力学方程:
     ```
-    V(t+1) = β × V(t) + I(t)       # 膜电位泄漏 + 积累
+    V(t+1) = β × V(t) + I(t)       # β 是保留率，V 乘以 β 后加上输入
     S(t) = H(V(t) - V_th)          # 脉冲发放
     V(t) = V(t) - S(t) × V_th      # 软复位 (默认)
     ```
@@ -218,17 +218,17 @@ class SimpleLIFNode(nn.Module):
     - reset 时保留参数，只重置膜电位
 
     默认值 (位精确模式):
-    - beta = 1.0 - 1e-7 (极小泄漏，保持位精确)
+    - beta = 1.0 - 1e-7 (近似完全保留，保持位精确)
 
     Args:
-        beta: 膜电位泄漏因子 (0 < beta ≤ 1)
+        beta: 膜电位保留率 (0 < beta ≤ 1)，β=0.9 表示保留 90%
         v_threshold: 发放阈值
         v_reset: 复位电压，None 表示软复位
-        trainable_beta: 是否训练泄漏率
+        trainable_beta: 是否训练保留率
         trainable_threshold: 是否训练阈值
         max_param_shape: 预分配参数形状，默认 DEFAULT_MAX_PARAM_SHAPE (64,)
     """
-    # 默认泄漏因子：极小泄漏，保持位精确但增加信息熵
+    # 默认保留率：近似完全保留，保持位精确但增加信息熵
     DEFAULT_BETA = 1.0 - 1e-7
 
     def __init__(self,
@@ -259,7 +259,7 @@ class SimpleLIFNode(nn.Module):
 
     @property
     def beta(self) -> torch.Tensor:
-        """获取泄漏因子"""
+        """获取保留率"""
         return self._beta
 
     @property
