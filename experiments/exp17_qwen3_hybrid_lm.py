@@ -224,6 +224,7 @@ class SNNMiddleLayer(nn.Module):
         # TEMPORAL: 逐时间步处理
         out_list = []
         for t in range(seq_len):
+            print(f"      [token] {t+1}/{seq_len}", flush=True)
             x_t = x[:, t, :]  # [batch, snn_hidden]
 
             # 转换为脉冲
@@ -451,7 +452,7 @@ def evaluate_batch(model, input_ids, labels, device):
     return loss.item(), acc, ppl
 
 
-def evaluate_dataset(model, samples, device, n_batches=10):
+def evaluate_dataset(model, samples, device, n_batches=10, verbose=False):
     """评估数据集
 
     Returns:
@@ -463,7 +464,9 @@ def evaluate_dataset(model, samples, device, n_batches=10):
     total_acc = 0
     total_ppl = 0
 
-    for _ in range(n_batches):
+    for i in range(n_batches):
+        if verbose:
+            print(f"  [eval] batch {i+1}/{n_batches}...", flush=True)
         input_ids, labels = get_batch(samples, BATCH_SIZE, device)
         loss, acc, ppl = evaluate_batch(model, input_ids, labels, device)
         total_loss += loss
@@ -833,8 +836,10 @@ def train_hybrid_lm():
     print("\n[eval] Initial evaluation...", flush=True)
     SpikeMode.set_global_mode(SpikeMode.TEMPORAL)
 
-    train_loss, train_acc, train_ppl = evaluate_dataset(model, train_samples, DEVICE)
-    test_loss, test_acc, test_ppl = evaluate_dataset(model, test_samples, DEVICE)
+    print("[eval] Evaluating train set...", flush=True)
+    train_loss, train_acc, train_ppl = evaluate_dataset(model, train_samples, DEVICE, verbose=True)
+    print("[eval] Evaluating test set...", flush=True)
+    test_loss, test_acc, test_ppl = evaluate_dataset(model, test_samples, DEVICE, verbose=True)
 
     print(f"[init] Train: Loss={train_loss:.4f}, Acc={train_acc:.4f}, PPL={train_ppl:.2f}", flush=True)
     print(f"[init] Test:  Loss={test_loss:.4f}, Acc={test_acc:.4f}, PPL={test_ppl:.2f}", flush=True)
